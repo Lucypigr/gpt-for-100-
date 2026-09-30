@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const FILES = ['js/util.js', 'js/data/config.js', 'js/data/skills.js', 'js/data/heroes.js', 'js/chat.js', 'js/world.js', 'js/battle.js', 'js/core.js', 'js/ai.js'];
+const FILES = ['js/util.js', 'js/data/config.js', 'js/data/skills.js', 'js/data/heroes.js', 'js/chat.js', 'js/world.js', 'js/battle.js', 'js/core.js', 'js/ai.js', 'js/warfare.js'];
 function load() {
   const ctx = { console, Math, Date, JSON, Buffer, setTimeout, clearTimeout };
   ctx.globalThis = ctx;
