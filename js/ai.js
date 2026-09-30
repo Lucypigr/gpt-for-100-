@@ -104,6 +104,44 @@ var AI = (function () {
     if (!p.aiMem) p.aiMem = { nextHero: 0, nextTeam: 0, heroCount: -1, lastChat: -999, fortFor: -1, lastBuildThink: 0, conquest: -1 };
     return p.aiMem;
   }
+  // 記住最近的敗仗，避免反覆把同一支部隊送去撞同一塊地。
+  // 放在玩家資料而非 aiMem，讓經驗可隨存檔延續；每人最多八筆。
+  function learnBattle(p, tile, won) {
+    if (Game.T.city[tile] >= 0) return; // 攻城需要輪流消耗守軍
+    const now = G().time;
+    const log = p.aiLearning || (p.aiLearning = []);
+    const k = log.findIndex(x => x[0] === tile);
+    const old = k >= 0 ? log.splice(k, 1)[0] : null;
+    if (won) return;
+    const count = old && now - old[1] < 720 ? Math.min(3, old[2] + 1) : 1;
+    log.push([tile, now, count]);
+    if (log.length > 8) log.shift();
+  }
+  function avoidTile(p, tile) {
+    const log = p.aiLearning;
+    if (!log) return false;
+    const loss = log.find(x => x[0] === tile);
+    if (!loss) return false;
+    const delay = (p.prof.skill < 0.4 ? 60 : 120) * loss[2];
+    return G().time - loss[1] < delay;
+  }
+
+  // 同一玩家正在攻打的普通土地，其他部隊不再重複出征。
+  let flightAt = -1, flightMarches = null, flight = new Set();
+  function inFlight(p, tile) {
+    if (flightAt !== G().time || flightMarches !== G().marches) {
+      flightAt = G().time;
+      flightMarches = G().marches;
+      flight = new Set();
+      const size = World.N * World.N;
+      for (const m of G().marches) if (m.type === 'attack' && Game.T.city[m.to] < 0) flight.add(m.pid * size + m.to);
+    }
+    return flight.has(p.id * World.N * World.N + tile);
+  }
+  function markFlight(p, tile) {
+    if (Game.T.city[tile] < 0) flight.add(p.id * World.N * World.N + tile);
+  }
+  function avoidLandAttack(p, tile) { return avoidTile(p, tile) || inFlight(p, tile); }
   function init(p) {
     calib();
     const pr = p.prof;
@@ -143,6 +181,12 @@ var AI = (function () {
     if (g.over) return;
     const m = mem(p);
     const pr = p.prof;
+    // 臨時守地任務完成後撤回部隊，避免主力永久卡在駐守狀態。
+    for (const team of p.teams) {
+      if (!team.guardUntil || g.time < team.guardUntil) continue;
+      if (team.status === 'garrison') Game.recall(p, team.id);
+      delete team.guardUntil;
+    }
     // 同盟
     if (p.alliance < 0) allianceSeek(p, m);
     // 內政
@@ -565,6 +609,7 @@ var AI = (function () {
         const fr = mem(p).front;
         if (fr) { const k = fr.indexOf(target); if (k >= 0) fr.splice(k, 1); }
         if (!r.ok) continue;
+        markFlight(p, target);
       } else if (!atMain && ratio < 0.7) {
         Game.send(p, team.id, p.cityTile, 'move');
       } else {
@@ -689,6 +734,7 @@ var AI = (function () {
     const reckless = U.rnd() < (1 - pr.skill) * 0.3;
     for (const i of cands) {
       if (T.owner[i] >= 0) continue; // 他人土地交給 PvP 邏輯
+      if (avoidLandAttack(p, i)) continue;
       const L = T.lvl[i];
       const ratio = mtp(p, team, tp, i) / (GP[L] * R50[L]);
       const pr2 = winP(perceived(p, ratio));
@@ -722,6 +768,7 @@ var AI = (function () {
     for (const i of cands) {
       const o = T.owner[i];
       if (o < 0 || o === p.id) continue;
+      if (avoidLandAttack(p, i)) continue;
       const op = Game.P[o];
       if (op.alliance >= 0 && sameBloc(op.alliance, p.alliance)) continue;
       if (p.captor >= 0 && (o === p.captor || (Game.P[p.captor].alliance >= 0 && op.alliance === Game.P[p.captor].alliance))) continue;
@@ -749,6 +796,7 @@ var AI = (function () {
           // 先「拔點」：攻打最靠近對方主城的土地，推進到城下
           let best2 = -1, bd = 1e9;
           for (const i of cands) {
+            if (avoidLandAttack(p, i)) continue;
             const d = World.dist(i, ct);
             if (d >= bd || d > 14) continue;
             const L = T.lvl[i];
@@ -840,6 +888,7 @@ var AI = (function () {
     let best = -1, bs = -1e9;
     for (const i of a.pave) {
       if (Game.isFriendly(p, i)) continue;
+      if (avoidLandAttack(p, i)) continue;
       if (T.owner[i] >= 0 && Game.P[T.owner[i]].alliance === p.alliance) continue;
       const L = T.lvl[i];
       const ratio = mtp(p, team, tp, i) / (GP[L] * R50[L]) * (T.owner[i] >= 0 ? 0.6 : 1);
@@ -1114,6 +1163,26 @@ var AI = (function () {
           }
         }
       }
+    } else if (Game.T.owner[tile] === p.id && Game.T.lvl[tile] >= 6 && march.end > G().time + 2) {
+      // 高級地被襲時，挑一隊有勝算且能先抵達的部隊駐守。
+      const enemy = attacker.teams[march.team];
+      const enemyPower = enemy ? Game.teamPower(attacker, enemy) : 0;
+      let best = null, bestPower = 0;
+      for (const t of p.teams) {
+        if (!Game.teamReady(p, t, CFG.COST_GARRISON)) continue;
+        if (Game.marchTime(p, t, t.base, tile) >= march.end - G().time) continue;
+        const power = Game.teamPower(p, t);
+        if (power > bestPower && power >= enemyPower * 0.85) { best = t; bestPower = power; }
+      }
+      const guarding = p.teams.find(t => t.status === 'garrison' && t.gtile === tile);
+      const incoming = G().marches.find(m => m.pid === p.id && m.type === 'garrison' && m.to === tile);
+      if (guarding || incoming) {
+        const team = guarding || p.teams[incoming.team];
+        if (team.guardUntil) team.guardUntil = Math.max(team.guardUntil, march.end + 20);
+      } else if (best) {
+        const sent = Game.send(p, best.id, tile, 'garrison');
+        if (sent.ok) best.guardUntil = march.end + 20;
+      }
     }
   }
   function onAttacked(p, attacker, tile, winner) {
@@ -1133,6 +1202,7 @@ var AI = (function () {
     if (U.rnd() < 0.8) later(p, 'world', U.pick(CHAT.captured).replace('{n}', attacker.name), U.rint(1, 12));
   }
   function onBattleResult(p, team, tile, won) {
+    learnBattle(p, tile, won);
     const m = mem(p);
     if (!won && p.prof.type === 'newbie' && U.rnd() < 0.08 && G().time - m.lastChat > 120) {
       m.lastChat = G().time;
@@ -1443,6 +1513,6 @@ var AI = (function () {
     makeProfiles, init, restore, PERSONA, sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
     onThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
     get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable,
-    _pending: pending,
+    _pending: pending, avoidTile,
   };
 })();
