@@ -1,0 +1,30 @@
+name: Game regression tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Smoke test
+        run: node tests/smoke.js
+      - name: AI behavior test
+        run: node tests/ai-behavior.js
+      - name: AI strategy test
+        run: node tests/ai-strategy.js
+      - name: Warfare regression test
+        run: node tests/warfare.js
+      - name: Economy test
+        run: node tests/economy.js
+      - name: Save/load test
+        run: node tests/saveload.js
