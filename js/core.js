@@ -776,6 +776,8 @@ var Game = (function () {
     team.gtile = -1;
     // 被攻擊方預警
     if (type === 'attack') {
+      const targetCity = T.city[target] >= 0 ? World.cities[T.city[target]] : null;
+      if (targetCity && targetCity.type === 'pass' && targetCity.alliance >= 0 && targetCity.alliance !== p.alliance) AI.onPassThreat(targetCity, p, m);
       const o = tileOwner(target);
       if (o >= 0 && o !== p.id) {
         const tgtCity = T.city[target] >= 0 && World.cities[T.city[target]].type === 'main';

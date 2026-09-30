@@ -563,6 +563,11 @@ var AI = (function () {
     return tp * (1 - (1 - m) * (0.3 + 0.7 * p.prof.skill));
   }
   function winP(r) { return 1 / (1 + Math.exp(-7 * (r - 1))); }
+  function siegeDamage(p, team) {
+    let dmg = 0;
+    for (const u of Game.teamUnits(p, team)) if (u.troops > 0) dmg += CFG.siegeValue(u.troops, u.siege || 10);
+    return dmg;
+  }
 
   function military(p) {
     const g = G();
@@ -764,6 +769,7 @@ var AI = (function () {
     let foe = -1, ft = -1;
     for (const k in p.grudge) { if (g.time - p.grudge[k] < 720 && p.grudge[k] > ft) { ft = p.grudge[k]; foe = +k; } }
     const cands = frontier(p, 50);
+    const stationed = garrisonMap();
     let best = -1, bs = -1e9;
     for (const i of cands) {
       const o = T.owner[i];
@@ -773,16 +779,27 @@ var AI = (function () {
       if (op.alliance >= 0 && sameBloc(op.alliance, p.alliance)) continue;
       if (p.captor >= 0 && (o === p.captor || (Game.P[p.captor].alliance >= 0 && op.alliance === Game.P[p.captor].alliance))) continue;
       const L = T.lvl[i];
-      // 估計對方駐守與守軍
-      const enemyBest = bestTeamPower(op) * (op.teams.some(t => t.gtile === i) ? 1 : 0.15);
-      const ratio = mtp(p, team, tp, i) / (GP[L] * R50[L] + enemyBest * 0.9);
+      // 偵察實際駐守；無人駐守的土地，比貼近敵方主城的土地更適合突襲。
+      let guardPower = 0;
+      for (const def of stationed.get(i) || []) {
+        if (def.p.id !== op.id && (op.alliance < 0 || def.p.alliance !== op.alliance)) continue;
+        guardPower += def.power * troopRisk(p, team, def.p, def.team);
+      }
+      const myEta = Game.marchTime(p, team, team.base, i);
+      const enemyEta = Math.round(World.dist(op.cityTile, i) * CFG.minPerTile(Game.teamSpeed(op, op.teams[0])));
+      const reaction = enemyEta + 3 < myEta && op.teams.some(t => t.status === 'idle' && t.base === op.cityTile) ? bestTeamPower(op) * 0.12 : 0;
+      const ratio = mtp(p, team, tp, i) / (GP[L] * R50[L] + guardPower * 0.9 + reaction);
       const w = winP(perceived(p, ratio));
       if (w < 0.55) continue;
       let v = L * 60 + (o === foe ? 400 : 0) + (op.alliance >= 0 && isEnemyAlliance(p, op.alliance) ? 150 : 0) - World.dist(i, team.base) * 5;
+      if (!guardPower && enemyEta > myEta + 5) v += 80;
+      if (mem(p).conquest === o) v += Math.max(0, 220 - World.dist(i, op.cityTile) * 18);
       if (op.power > p.power * 1.5 && o !== foe && persona(p) !== 'warmonger') v -= 200; // 不惹強者（好戰者例外）
       if (p.landCount >= p.landCap && L < 5) continue;
       if (v > bs) { bs = v; best = i; }
     }
+    const raid = raidOutpost(p, team, tp, foe);
+    if (raid && raid.score > Math.max(150, bs + 35)) return raid.tile;
     if (best >= 0 && bs > 150) return best;
     // 攻打弱小鄰居主城（課長/老手）
     if (pr.aggr > 0.6 && (pr.skill > 0.5 || persona(p) === 'hothead') && g.time > CFG.PROTECT_DAYS * 1440) {
@@ -833,6 +850,61 @@ var AI = (function () {
     }
     return -1;
   }
+  let guardAt = -1, guardPlayers = null, guardPositions = null;
+  function garrisonMap() {
+    if (guardAt === G().time && guardPlayers === Game.P) return guardPositions;
+    guardAt = G().time; guardPlayers = Game.P; guardPositions = new Map();
+    for (const p of Game.P) for (const team of p.teams) {
+      if (team.status !== 'garrison' || team.gtile < 0 || Game.T.city[team.gtile] >= 0) continue;
+      const list = guardPositions.get(team.gtile) || [];
+      list.push({ p, team, power: Game.teamPower(p, team) });
+      guardPositions.set(team.gtile, list);
+    }
+    return guardPositions;
+  }
+  function troopRisk(attacker, atkTeam, defender, defTeam) {
+    const atk = Game.heroByUid(attacker, atkTeam.slots[0]);
+    const def = Game.heroByUid(defender, defTeam.slots[0]);
+    if (!atk || !def) return 1;
+    const a = Game.tpl(atk).troop, d = Game.tpl(def).troop;
+    return TROOP_COUNTER[d] === a ? 1.15 : TROOP_COUNTER[a] === d ? 0.87 : 1;
+  }
+  function borderOutposts(p) {
+    const m = mem(p);
+    if (m.raidAt !== undefined && G().time - m.raidAt < 30) return m.raidSites;
+    m.raidAt = G().time;
+    const seen = new Set(), sites = [], nearby = [];
+    for (const i of p.lands) {
+      World.neighbors8(i, nearby);
+      for (const n of nearby) {
+        const cid = Game.T.city[n];
+        if (cid < 0 || seen.has(cid)) continue;
+        seen.add(cid);
+        const c = World.cities[cid];
+        if (World.isOutpost(c) && !c.dead && c.owner !== p.id) sites.push(cid);
+      }
+    }
+    m.raidSites = sites;
+    return sites;
+  }
+  function raidOutpost(p, team, tp, foe) {
+    if (p.prof.skill < 0.5 || persona(p) === 'turtle') return null;
+    const dmg = siegeDamage(p, team);
+    let best = null, bs = -1e9;
+    for (const cid of borderOutposts(p)) {
+      const c = World.cities[cid], op = Game.P[c.owner];
+      if (!op || (op.alliance >= 0 && sameBloc(op.alliance, p.alliance))) continue;
+      if (op.id !== foe && !isEnemyAlliance(p, op.alliance)) continue;
+      const tile = c.tiles[0], d = World.dist(tile, team.base);
+      if (d > 25 || Game.attackBlock(p, tile) || c.dur > dmg * 8) continue;
+      let defense = 0;
+      for (const t of op.teams) if ((t.status === 'idle' && t.base === tile) || (t.status === 'garrison' && t.gtile === tile)) defense += Game.teamPower(op, t) * troopRisk(p, team, op, t);
+      if (defense > mtp(p, team, tp, tile) * 0.9) continue;
+      const score = 540 + (op.id === foe ? 120 : 0) + (c.type === 'camp' ? 40 : 0) - d * 8 - defense / Math.max(1, tp) * 80;
+      if (score > bs) { bs = score; best = tile; }
+    }
+    return best === null ? null : { tile: best, score: bs };
+  }
   function bestTeamPower(op) {
     const g = G();
     if (op._btpT !== undefined && g.time - op._btpT < 60) return op._btp;
@@ -874,12 +946,19 @@ var AI = (function () {
         aliveSq = 1;
       }
       const w = squadP ? winP(perceived(p, mtp(p, team, tp, center) / squadP)) : 1;
-      // 消耗戰：戰力足夠就上，守軍清空則全力拆耐久
-      if (aliveSq === 0 || w > 0.18 - p.prof.skill * 0.06 || (p.prof.skill < 0.4 && U.chance(0.3))) {
+      // 主力先清守軍；弱隊等主力交戰後再上，避免拆遷隊搶跑送兵。
+      const damaged = city.garrison && city.garrison.some(s => s.some(n => n > 0) && s.some(n => n < CFG.CITY_GARRISON[city.lvl][2]));
+      const waveLate = a.rallyAt && g.time > a.rallyAt + 12;
+      const fallback = a.rallyAt && g.time > a.rallyAt + 40;
+      const assault = w >= 0.34 || (damaged && w >= 0.16) || (waveLate && w >= 0.12) || (fallback && w >= 0.08);
+      if (aliveSq === 0 || assault || (p.prof.skill < 0.4 && waveLate && U.chance(0.15))) {
+        // NPC 守軍一小時後重置；拆遷隊來不及抵達就留待下一波。
+        if (aliveSq === 0 && city.alliance < 0 && city.resetAt && g.time + eta >= city.resetAt - 2 && !fallback) return -2;
+        if (aliveSq === 0 && siegeDamage(p, team) < Math.min(180, Math.max(20, city.dur / 300)) && !waveLate) return -2;
         if (!Game.attackBlock(p, center)) return center;
         for (const t of city.tiles) if (!Game.attackBlock(p, t)) return t;
       }
-      return -1;
+      return -2;
     }
     // 鋪路
     if (!a.pave || !a.pave.length || !a.field) return -1;
@@ -978,6 +1057,21 @@ var AI = (function () {
     for (const id of a.members) s += bestTeamPower(Game.P[id]);
     return s;
   }
+  // 關口的價值在於打開尚未通行的州路，而非單純的城池積分。
+  function passPriority(a, c) {
+    if (c.type !== 'pass') return 0;
+    const [s1, s2] = c.link;
+    const foothold = s => a.members.some(id => Game.P[id].state === s) || a.cities.some(id => World.cities[id].state === s);
+    const oneSide = foothold(s1) !== foothold(s2);
+    const center = World.states[s1].type === 'center' || World.states[s2].type === 'center';
+    const openRoute = a.cities.some(id => {
+      const owned = World.cities[id];
+      return owned.type === 'pass' && owned.link.includes(s1) && owned.link.includes(s2);
+    });
+    if (openRoute) return c.alliance >= 0 ? 20 : -100;
+    if (!oneSide) return 0;
+    return center ? 210 : 130;
+  }
   function chooseTarget(a) {
     const g = G();
     const leader = Game.P[a.leader];
@@ -1012,7 +1106,7 @@ var AI = (function () {
       const need = c.alliance < 0 ? CP[c.lvl] * garr[0] * 0.9 : (Game.G.alliances[c.alliance].power / 60);
       if (str < need * (0.55 + leader.prof.skill * 0.3)) continue;
       const pts = (CFG.CITY_POINTS[c.type] || 5) + (c.type === 'pass' ? 25 : 0) + (c.type === 'luoyang' ? 1000 : 0);
-      cands.push({ c, score: pts * 3 - d * 1.2 - (c.alliance >= 0 ? 30 : 0) + U.rnd() * 15 });
+      cands.push({ c, score: pts * 3 + passPriority(a, c) - d * 1.2 - (c.alliance >= 0 ? 30 : 0) + U.rnd() * 15 });
     }
     cands.sort((x, y) => y.score - x.score);
     for (const { c } of cands.slice(0, 6)) {
@@ -1184,6 +1278,32 @@ var AI = (function () {
         if (sent.ok) best.guardUntil = march.end + 20;
       }
     }
+  }
+  // NPC 關口沒有個人土地所有者，故須由同盟接收關口遇襲預警。
+  function onPassThreat(city, attacker, march) {
+    const a = G().alliances[city.alliance];
+    if (!a || a.dead || sameBloc(a.id, attacker.alliance)) return;
+    const tile = city.tiles[(city.tiles.length / 2) | 0];
+    const enemy = attacker.teams[march.team];
+    if (!enemy) return;
+    const enemyPower = Game.teamPower(attacker, enemy);
+    let covered = 0, best = null, bestPower = 0;
+    for (const id of a.members) {
+      const p = Game.P[id];
+      for (const team of p.teams) {
+        if ((team.status === 'garrison' && city.tiles.includes(team.gtile)) || (team.status === 'idle' && city.tiles.includes(team.base))) covered = Math.max(covered, Game.teamPower(p, team));
+        if (!p.ai || !Game.teamReady(p, team, CFG.COST_GARRISON)) continue;
+        if (Game.teamTroops(p, team) < Game.teamCapTroops(p, team) * 0.5) continue;
+        const eta = Game.marchTime(p, team, team.base, tile);
+        if (G().time + eta + 2 >= march.end) continue;
+        const power = Game.teamPower(p, team) * CFG.moraleDmg(Game.marchMorale(p, team, tile));
+        if (power > bestPower) { best = { p, team }; bestPower = power; }
+      }
+    }
+    if (covered >= enemyPower * 0.85 || bestPower < enemyPower * 0.8 || !best) return;
+    if (G().marches.some(m => m.type === 'garrison' && m.to === tile && Game.P[m.pid].alliance === a.id)) return;
+    const sent = Game.send(best.p, best.team.id, tile, 'garrison');
+    if (sent.ok) best.team.guardUntil = march.end + 25;
   }
   function onAttacked(p, attacker, tile, winner) {
     p.grudge[attacker.id] = G().time;
@@ -1511,8 +1631,8 @@ var AI = (function () {
 
   return {
     makeProfiles, init, restore, PERSONA, sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
-    onThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
-    get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable,
-    _pending: pending, avoidTile,
+    onThreat, onPassThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
+    get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable, allianceAction, pvpTarget,
+    _pending: pending, avoidTile, passPriority,
   };
 })();
