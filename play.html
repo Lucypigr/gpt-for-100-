@@ -1,0 +1,130 @@
+<title>率土爭鋒</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Serif+TC:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+<style>html,body{background:#120e09}</style>
+
+  <canvas id="map"></canvas>
+
+  <!-- 開始畫面 -->
+  <div id="start">
+    <div class="start-bg"></div>
+    <div class="start-box">
+      <div class="title-seal">三國·賽季制策略</div>
+      <h1 class="game-title">率土爭鋒</h1>
+      <div class="subtitle">十三州 · 一百五十位 AI 主公 · 同盟爭霸</div>
+      <div id="start-continue" class="hidden">
+        <button class="btn big gold" data-act="continue">繼續遊戲</button>
+        <div class="save-info"></div>
+      </div>
+      <details id="start-hist"><summary>存檔紀錄</summary><div id="start-hist-list" class="hist-list">讀取中…</div></details>
+      <div class="start-form">
+        <label>主公名號<input id="in-name" maxlength="10" placeholder="輸入你的名號" value="無名主公"></label>
+        <label>出生州<select id="in-state"></select></label>
+        <label>AI 玩家數<select id="in-ai">
+          <option value="500" selected>500 位（完整體驗・預設）</option>
+          <option value="250">250 位</option>
+          <option value="150">150 位</option>
+          <option value="100">100 位</option>
+          <option value="60">60 位（低配電腦・手機）</option>
+        </select></label>
+        <button class="btn big red" data-act="newgame">開啟新賽季</button>
+      </div>
+      <div class="start-tips">
+        <p>・派兵佔領與領地<b>相鄰</b>的土地，取得木、鐵、石、糧。</p>
+        <p>・招募武將，組成「大營・中軍・前鋒」三人部隊。</p>
+        <p>・加入同盟，一起<b>鋪路</b>、<b>攻城</b>，爭奪州府與洛陽。</p>
+        <p>・你在線時，所有 AI 主公同步行動；離線時天下暫停。</p>
+      </div>
+    </div>
+    <div id="loading" class="hidden"><div class="spinner"></div><div class="loading-text">天下生成中……</div></div>
+  </div>
+
+  <!-- 遊戲 HUD -->
+  <div id="hud" class="hidden">
+    <div id="topbar">
+      <div id="lord" data-act="open" data-panel="city">
+        <div class="avatar">主</div>
+        <div class="lord-info">
+          <div class="lord-name"></div>
+          <div class="lord-sub"><span id="fame"></span><span id="power"></span></div>
+          <div class="lord-sub2"><span id="lands"></span><span id="alli-tag"></span></div>
+        </div>
+      </div>
+      <div id="resbar"></div>
+      <div id="clock">
+        <div id="clock-time"></div>
+        <div id="clock-phase"></div>
+        <div id="speed"></div>
+      </div>
+    </div>
+
+    <div id="leftcol">
+      <div id="coord"></div>
+      <div class="mini-wrap"><canvas id="mini" width="240" height="124"></canvas></div>
+      <div id="alert" class="hidden"></div>
+      <div id="quest-mini"></div>
+    </div>
+
+    <div id="teampanel"></div>
+
+    <div id="maptools">
+      <button class="tool" data-act="home" title="回主城">城</button>
+      <button class="tool" data-act="zoomin" title="放大">＋</button>
+      <button class="tool" data-act="zoomout" title="縮小">－</button>
+      <button class="tool" data-act="mapmode" title="切換勢力圖">勢</button>
+      <button class="tool" data-act="aimarch" title="顯示/隱藏其他玩家行軍">軍</button>
+    </div>
+
+    <div id="menubar">
+      <button class="mbtn" data-act="open" data-panel="city"><i>城</i><span>主城</span></button>
+      <button class="mbtn" data-act="open" data-panel="heroes"><i>將</i><span>武將</span></button>
+      <button class="mbtn" data-act="open" data-panel="teams"><i>軍</i><span>部隊</span></button>
+      <button class="mbtn" data-act="open" data-panel="recruit"><i>募</i><span>招募</span></button>
+      <button class="mbtn" data-act="open" data-panel="skills"><i>法</i><span>戰法</span></button>
+      <button class="mbtn" data-act="open" data-panel="reports"><i>報</i><span>戰報</span><em id="rep-badge" class="badge hidden"></em></button>
+      <button class="mbtn" data-act="open" data-panel="alliance"><i>盟</i><span>同盟</span><em id="alli-badge" class="badge hidden"></em></button>
+      <button class="mbtn" data-act="open" data-panel="world"><i>圖</i><span>天下</span></button>
+      <button class="mbtn" data-act="open" data-panel="rank"><i>榜</i><span>排行</span></button>
+      <button class="mbtn" data-act="open" data-panel="season"><i>季</i><span>賽季</span></button>
+      <button class="mbtn" data-act="open" data-panel="quests"><i>任</i><span>任務</span><em id="quest-badge" class="badge hidden"></em></button>
+      <button class="mbtn" data-act="open" data-panel="settings"><i>設</i><span>設定</span></button>
+    </div>
+
+    <div id="chatbox">
+      <div class="chat-tabs">
+        <button data-act="chattab" data-tab="world" class="on">世界</button>
+        <button data-act="chattab" data-tab="ally">同盟</button>
+        <button data-act="chattab" data-tab="sys">天下事</button>
+        <button data-act="chatfold" class="fold">▾</button>
+      </div>
+      <div id="chatlog"></div>
+      <form id="chatform"><input id="chatin" maxlength="60" placeholder="說點什麼…（Enter 發送）"><button class="btn small">發送</button></form>
+    </div>
+  </div>
+
+  <div id="tilepop" class="hidden"></div>
+  <div id="modal" class="hidden">
+    <div class="win">
+      <div class="win-title"><span></span><button class="close" data-act="close">✕</button></div>
+      <div class="win-body"></div>
+    </div>
+  </div>
+  <div id="toasts"></div>
+
+  <script src="js/util.js"></script>
+  <script src="js/data/config.js"></script>
+  <script src="js/data/skills.js"></script>
+  <script src="js/data/heroes.js"></script>
+  <script src="js/chat.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/battle.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/savehist.js"></script>
+  <script src="js/replay.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+  <script src="js/mobile.js"></script>
