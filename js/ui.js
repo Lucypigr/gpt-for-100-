@@ -67,7 +67,7 @@ var UI = (function () {
     G = Game.G; user = Game.P[G.userId];
     Render.buildTerrain();
     Render.initMini($('#mini'));
-    Render.centerOn(user.cityTile, 56);
+    Render.centerOn(user.cityTile, window.innerWidth < 700 ? 58 : 76);
     $('#start').classList.add('hidden');
     $('#hud').classList.remove('hidden');
     buildSpeed();

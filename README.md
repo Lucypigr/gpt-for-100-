@@ -96,6 +96,7 @@
 ```
 index.html         進入點
 css/style.css      率土風格 UI
+assets/            原創城池與地形插畫
 js/util.js         亂數、雜訊、格式化、AI 暱稱
 js/data/*.js       規則常數、建築、武將、戰法、任務
 js/world.js        十三州地圖生成（州界山脈、關口、城池、河流、土地等級）
@@ -159,4 +160,4 @@ node tests/calibrate.js      # 隊伍戰力對守軍勝率校準
 - [率土之濱攻城與城池耐久說明（官網賽季）](https://stzb.163.com/m/zf/fhlcbc.html)
 - [率土之濱地圖介紹（十三州）](https://m.bengku.com/sygl/353.html)
 
-本作為愛好者自製的學習專案，與網易《率土之濱》無關。
+本作為愛好者自製的學習專案；地圖城池與地形插畫為本作原創素材，與網易《率土之濱》無關。

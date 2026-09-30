@@ -10,16 +10,26 @@ var Render = (function () {
   let hover = -1, selected = -1;
   let mode = 'relation'; // relation | alliance
   let showAIMarch = true;
+  let detailSprites = null;
+  let terrainArt = null;
+  const cityArt = {};
   const fx = [];
   const TEX = 4; // 地形貼圖每格像素
 
   const REL_COLOR = {
-    self: [60, 190, 80], ally: [60, 125, 220], enemy: [215, 60, 50], free: [220, 180, 60], npcCity: [150, 150, 150],
+    self: [53, 201, 175], ally: [74, 157, 219], enemy: [215, 76, 59], free: [215, 177, 74], npcCity: [150, 150, 150],
   };
 
   function init(canvas) {
     cv = canvas;
     ctx = cv.getContext('2d');
+    for (const [kind, path] of [['capital', 'assets/city-capital.png'], ['town', 'assets/city-town.png']]) {
+      const art = new Image();
+      art.src = path;
+      cityArt[kind] = art;
+    }
+    terrainArt = new Image();
+    terrainArt.src = 'assets/terrain-details.png';
     resize();
     window.addEventListener('resize', resize);
   }
@@ -40,31 +50,34 @@ var Render = (function () {
     const tctx = terrainCv.getContext('2d');
     const img = tctx.createImageData(N * TEX, N * TEX);
     const d = img.data;
-    const RES_TINT = [[118, 142, 86], [128, 128, 124], [170, 150, 118], [204, 180, 104]];
+    const RES_TINT = [[107, 154, 78], [139, 158, 119], [169, 168, 130], [204, 180, 89]];
     const nz = U.makeNoise(World.seed + 99);
     for (let y = 0; y < N; y++) {
       for (let x = 0; x < N; x++) {
         const i = y * N + x;
         const tr = T.terrain[i];
         let base;
-        if (tr === TERRAIN.MOUNTAIN) base = [112, 100, 80];
-        else if (tr === TERRAIN.WATER) base = [92, 128, 134];
-        else if (tr === TERRAIN.CITY) base = [158, 140, 108];
+        if (tr === TERRAIN.MOUNTAIN) base = [118, 125, 94];
+        else if (tr === TERRAIN.WATER) base = [53, 145, 156];
+        else if (tr === TERRAIN.CITY) base = [172, 169, 119];
         else {
           const tint = RES_TINT[T.res[i]];
           const lv = T.lvl[i];
-          const k = 0.42;
-          const dark = 1 - lv * 0.03;
-          base = [(205 * (1 - k) + tint[0] * k) * dark, (190 * (1 - k) + tint[1] * k) * dark, (148 * (1 - k) + tint[2] * k) * dark];
+          const k = 0.3;
+          const dark = 1 - lv * 0.009;
+          base = [(169 * (1 - k) + tint[0] * k) * dark, (189 * (1 - k) + tint[1] * k) * dark, (111 * (1 - k) + tint[2] * k) * dark];
+          if ((x > 0 && T.terrain[i - 1] === TERRAIN.WATER) || (y > 0 && T.terrain[i - N] === TERRAIN.WATER) ||
+              (x < N - 1 && T.terrain[i + 1] === TERRAIN.WATER) || (y < N - 1 && T.terrain[i + N] === TERRAIN.WATER)) {
+            base = base.map((v, channel) => v * 0.72 + [207, 194, 132][channel] * 0.28);
+          }
         }
-        const big = nz(x * 0.05, y * 0.05, 3) - 0.5;
+        const big = nz(x * 0.055, y * 0.055, 3) - 0.5;
         for (let py = 0; py < TEX; py++) {
           for (let px = 0; px < TEX; px++) {
             const o = ((y * TEX + py) * N * TEX + (x * TEX + px)) * 4;
-            let v = (hash(x * TEX + px, y * TEX + py) - 0.5) * 14 + big * 22;
-            if (tr === TERRAIN.MOUNTAIN) v += (hash(x, y) - 0.5) * 20 + (py < 2 ? 10 : -6);
-            if (tr === TERRAIN.WATER && ((px + py + x) % 4 === 0)) v += 14;
-            if (tr !== TERRAIN.MOUNTAIN && tr !== TERRAIN.WATER && (px === 0 || py === 0)) v -= 9; // 格線
+            let v = (hash(x * TEX + px, y * TEX + py) - 0.5) * 11 + big * 28;
+            if (tr === TERRAIN.MOUNTAIN) v += (hash(x, y) - 0.5) * 17 + (py < 2 ? 7 : -5);
+            if (tr === TERRAIN.WATER) v += Math.sin((x * TEX + px + y * 2) * 0.45) * 5 + (py === 0 ? 8 : 0);
             d[o] = base[0] + v; d[o + 1] = base[1] + v; d[o + 2] = base[2] + v * 0.9; d[o + 3] = 255;
           }
         }
@@ -86,7 +99,82 @@ var Render = (function () {
       mimg.data[i * 4] = c[0]; mimg.data[i * 4 + 1] = c[1]; mimg.data[i * 4 + 2] = c[2]; mimg.data[i * 4 + 3] = 255;
     }
     mctx.putImageData(mimg, 0, 0);
+    buildDetailSprites();
     fullOverlay();
+  }
+
+  // A small atlas keeps close-up foliage and farmland detailed without drawing
+  // hundreds of individual leaves on every animation frame.
+  function buildDetailSprites() {
+    function sprite(draw) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 96; canvas.height = 72;
+      draw(canvas.getContext('2d'));
+      return canvas;
+    }
+    function tree(c, x, y, s, light, dark) {
+      c.fillStyle = 'rgba(39,55,26,.24)';
+      c.beginPath(); c.ellipse(x + s * .38, y + s * .25, s * .72, s * .18, 0, 0, 6.283); c.fill();
+      c.fillStyle = '#5a4730'; c.fillRect(x - s * .08, y - s * .46, s * .16, s * .63);
+      c.fillStyle = dark;
+      c.beginPath(); c.ellipse(x + s * .09, y - s * .65, s * .55, s * .58, -.2, 0, 6.283); c.fill();
+      c.fillStyle = light;
+      c.beginPath(); c.ellipse(x - s * .18, y - s * .9, s * .43, s * .39, -.3, 0, 6.283); c.fill();
+      c.fillStyle = 'rgba(206,218,130,.48)';
+      c.beginPath(); c.ellipse(x - s * .28, y - s * 1.02, s * .17, s * .09, -.4, 0, 6.283); c.fill();
+    }
+    const forest = [
+      sprite(c => { tree(c, 32, 58, 20, '#659647', '#3d6d3b'); tree(c, 64, 55, 25, '#668f43', '#315b36'); tree(c, 47, 65, 17, '#84a64c', '#507741'); }),
+      sprite(c => { tree(c, 29, 55, 23, '#799e53', '#476e3e'); tree(c, 55, 59, 18, '#5c873d', '#365e36'); tree(c, 75, 58, 20, '#6d9349', '#3e6739'); }),
+      sprite(c => { tree(c, 42, 58, 27, '#769a4b', '#426b3a'); tree(c, 72, 62, 19, '#88a750', '#4c7541'); }),
+    ];
+    const field = sprite(c => {
+      c.fillStyle = 'rgba(77,70,27,.16)';
+      c.beginPath(); c.ellipse(48, 55, 42, 12, 0, 0, 6.283); c.fill();
+      c.fillStyle = '#b7a64d';
+      c.beginPath(); c.moveTo(8, 51); c.lineTo(48, 33); c.lineTo(88, 51); c.lineTo(48, 68); c.closePath(); c.fill();
+      c.fillStyle = '#d5c663';
+      for (let k = 0; k < 6; k++) {
+        c.beginPath(); c.moveTo(14 + k * 7, 49 - k * 2.5); c.lineTo(48 + k * 6, 61 - k * 2);
+        c.lineTo(51 + k * 6, 59 - k * 2); c.lineTo(18 + k * 7, 47 - k * 2.5); c.closePath(); c.fill();
+      }
+      c.strokeStyle = '#8b823c'; c.lineWidth = 1.5;
+      for (let k = 0; k < 4; k++) { c.beginPath(); c.moveTo(17, 47 + k * 5); c.lineTo(50, 34 + k * 5); c.stroke(); }
+    });
+    const rock = sprite(c => {
+      c.fillStyle = 'rgba(51,52,42,.24)';
+      c.beginPath(); c.ellipse(51, 59, 39, 10, 0, 0, 6.283); c.fill();
+      for (const [x, y, s] of [[28, 53, 17], [54, 50, 23], [72, 58, 12]]) {
+        c.fillStyle = '#727b6b';
+        c.beginPath(); c.moveTo(x - s, y); c.lineTo(x - s * .3, y - s * .8); c.lineTo(x + s * .55, y - s * .65); c.lineTo(x + s, y); c.closePath(); c.fill();
+        c.fillStyle = '#b7bc9e';
+        c.beginPath(); c.moveTo(x - s, y); c.lineTo(x - s * .3, y - s * .8); c.lineTo(x + s * .1, y - s * .42); c.lineTo(x + s * .1, y); c.closePath(); c.fill();
+      }
+    });
+    const scrub = sprite(c => {
+      for (const [x, y, s] of [[27, 55, 8], [47, 62, 6], [69, 54, 10]]) {
+        c.fillStyle = 'rgba(47,78,37,.25)';
+        c.beginPath(); c.ellipse(x + 2, y + 2, s * 1.2, s * .35, 0, 0, 6.283); c.fill();
+        c.fillStyle = '#648a43';
+        c.beginPath(); c.ellipse(x, y - s * .4, s, s * .6, 0, 0, 6.283); c.fill();
+        c.fillStyle = '#95af60';
+        c.beginPath(); c.ellipse(x - s * .25, y - s * .65, s * .45, s * .24, 0, 0, 6.283); c.fill();
+      }
+    });
+    detailSprites = { forest, field, rock, scrub };
+  }
+
+  function drawTerrainSprite(kind, x, y, w, h, variant) {
+    if (terrainArt && terrainArt.complete && terrainArt.naturalWidth) {
+      const half = terrainArt.naturalWidth / 2;
+      const pos = { forest: [0, 0], rock: [1, 0], field: [0, 1], scrub: [1, 1] }[kind];
+      if (variant % 2) { ctx.save(); ctx.translate(x * 2, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(terrainArt, pos[0] * half, pos[1] * half, half, half, x - w / 2, y - h * 0.82, w, h);
+      if (variant % 2) ctx.restore();
+    } else {
+      const sprite = kind === 'forest' ? detailSprites.forest[variant % detailSprites.forest.length] : detailSprites[kind];
+      ctx.drawImage(sprite, x - w / 2, y - h * 0.82, w, h);
+    }
   }
 
   // ============ 勢力覆蓋 ============
@@ -123,7 +211,7 @@ var Render = (function () {
     const o = i * 4;
     const d = overlayImg.data;
     if (!c) { d[o + 3] = 0; return; }
-    d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 120;
+    d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 69;
   }
   function fullOverlay() {
     for (let i = 0; i < N * N; i++) paintTile(i);
@@ -220,7 +308,7 @@ var Render = (function () {
     ctx.save();
     ctx.setTransform(DPR * hw, DPR * hh, -DPR * hw, DPR * hh, DPR * ox, DPR * oy);
     ctx.imageSmoothingEnabled = false;
-    ctx.globalAlpha = tw < 12 ? 0.95 : 0.8;
+    ctx.globalAlpha = tw < 12 ? 0.95 : 0.72;
     ctx.drawImage(overlayCv, 0, 0);
     ctx.restore();
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -250,19 +338,9 @@ var Render = (function () {
 
   function drawDetails(x0, x1, y0, y1, hw, hh, tw) {
     const T = Game.T;
-    const fine = tw >= 38;
-    const showLv = tw >= 52;
-    // 格線
-    if (fine) {
-      ctx.strokeStyle = 'rgba(50,35,20,0.16)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = x0; x <= x1 + 1; x++) { const [ax, ay] = toScreen(x, y0); const [bx, by] = toScreen(x, y1 + 1); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
-      for (let y = y0; y <= y1 + 1; y++) { const [ax, ay] = toScreen(x0, y); const [bx, by] = toScreen(x1 + 1, y); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
-      ctx.stroke();
-    }
+    const fine = tw >= 32;
+    const showLv = tw >= 80;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const fontLv = Math.round(tw * 0.2) + 'px "Noto Serif TC", serif';
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const i = y * N + x;
@@ -271,62 +349,73 @@ var Render = (function () {
         if (!onScreen(sx, sy, tw)) continue;
         const h = hash(x, y);
         if (tr === TERRAIN.MOUNTAIN) {
-          drawPeak(sx, sy + hh * 0.35, tw * (0.42 + h * 0.2), h);
+          if (terrainArt && terrainArt.complete && terrainArt.naturalWidth) {
+            if (h > 0.25) drawTerrainSprite('rock', sx, sy + hh * 0.35, tw * (0.83 + h * 0.17), tw * (0.63 + h * 0.14), Math.floor(h * 10));
+          } else drawPeak(sx, sy + hh * 0.5, tw * (0.52 + h * 0.16), h);
         } else if (tr === TERRAIN.WATER) {
-          if (fine) {
-            ctx.strokeStyle = 'rgba(210,235,240,0.45)'; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(sx - hw * 0.4, sy); ctx.quadraticCurveTo(sx - hw * 0.2, sy - hh * 0.25, sx, sy); ctx.quadraticCurveTo(sx + hw * 0.2, sy + hh * 0.25, sx + hw * 0.4, sy); ctx.stroke();
+          if (fine && h > 0.55) {
+            ctx.strokeStyle = 'rgba(217,244,224,0.55)'; ctx.lineWidth = Math.max(1, tw * 0.018);
+            ctx.beginPath(); ctx.moveTo(sx - hw * 0.37, sy - hh * 0.12); ctx.quadraticCurveTo(sx - hw * 0.13, sy - hh * 0.32, sx + hw * 0.05, sy - hh * 0.13); ctx.stroke();
+            ctx.strokeStyle = 'rgba(18,98,114,0.32)';
+            ctx.beginPath(); ctx.moveTo(sx - hw * 0.08, sy + hh * 0.28); ctx.lineTo(sx + hw * 0.36, sy + hh * 0.12); ctx.stroke();
           }
+          if (fine) drawShore(x, y, sx, sy, hw, hh);
         } else if (tr === TERRAIN.PLAIN && fine) {
           const r = T.res[i];
           const lv = T.lvl[i];
-          if (r === 0) { // 木
-            for (let k = 0; k < 2 + (lv > 5 ? 1 : 0); k++) {
-              const ox = (hash(x + k, y * 3) - 0.5) * hw * 0.9, oy = (hash(x * 5, y + k) - 0.5) * hh * 0.7;
-              const s = tw * 0.07;
-              ctx.fillStyle = '#5b4a33'; ctx.fillRect(sx + ox - 0.8, sy + oy, 1.6, s * 1.2);
-              ctx.fillStyle = k % 2 ? '#4f6b36' : '#5f7d3f';
-              ctx.beginPath(); ctx.arc(sx + ox, sy + oy - s * 0.3, s, 0, 6.283); ctx.fill();
+          if (r === 0) {
+            if (h > 0.67) {
+              drawTerrainSprite('forest', sx, sy, tw * (0.7 + h * 0.12), tw * (0.53 + h * 0.07), Math.floor(h * 10));
+            } else if (h > 0.38) {
+              drawTerrainSprite('scrub', sx, sy, tw * 0.54, tw * 0.35, Math.floor(h * 10));
             }
-          } else if (r === 1) { // 鐵
-            ctx.fillStyle = '#6d6a66';
-            const s = tw * 0.08;
-            ctx.beginPath(); ctx.moveTo(sx - s * 1.4, sy + s * 0.5); ctx.lineTo(sx - s * 0.4, sy - s); ctx.lineTo(sx + s * 0.8, sy - s * 0.3); ctx.lineTo(sx + s * 1.3, sy + s * 0.6); ctx.closePath(); ctx.fill();
-            ctx.fillStyle = '#9a9690'; ctx.fillRect(sx - s * 0.3, sy - s * 0.6, s * 0.5, s * 0.3);
-          } else if (r === 2) { // 石
-            ctx.fillStyle = '#b3a283';
-            const s = tw * 0.07;
-            ctx.fillRect(sx - s * 1.6, sy - s * 0.2, s * 1.3, s * 0.9);
-            ctx.fillRect(sx + s * 0.1, sy - s * 0.6, s * 1.4, s * 1.1);
-            ctx.strokeStyle = 'rgba(80,65,45,0.5)'; ctx.lineWidth = 1;
-            ctx.strokeRect(sx - s * 1.6, sy - s * 0.2, s * 1.3, s * 0.9); ctx.strokeRect(sx + s * 0.1, sy - s * 0.6, s * 1.4, s * 1.1);
-          } else { // 糧
-            ctx.strokeStyle = 'rgba(150,120,40,0.7)'; ctx.lineWidth = 1.2;
-            ctx.beginPath();
-            for (let k = -1; k <= 1; k++) { ctx.moveTo(sx - hw * 0.35, sy + k * hh * 0.22); ctx.lineTo(sx + hw * 0.35, sy + k * hh * 0.22 - hh * 0.15); }
-            ctx.stroke();
+          } else if (r === 3 && h > 0.43) {
+            drawTerrainSprite('field', sx, sy, tw * 0.92, tw * 0.53, Math.floor(h * 10));
+          } else if ((r === 1 && h > 0.73) || (r === 2 && h > 0.54)) {
+            drawTerrainSprite('rock', sx, sy, tw * 0.72, tw * 0.5, Math.floor(h * 10));
           }
-          if (showLv) {
-            ctx.font = fontLv;
-            ctx.fillStyle = lv >= 7 ? '#8a1c10' : lv >= 5 ? '#5a2d10' : '#3b3020';
-            ctx.fillText(lv, sx, sy + hh * 0.52);
+          if (r !== 0 && h > 0.87) {
+            drawTerrainSprite('scrub', sx, sy, tw * 0.62, tw * 0.4, Math.floor(h * 10));
+          }
+          if (showLv && lv >= 5) {
+            ctx.fillStyle = 'rgba(27,35,21,0.68)';
+            ctx.beginPath(); ctx.arc(sx + hw * 0.38, sy + hh * 0.5, 8, 0, 6.283); ctx.fill();
+            ctx.font = 'bold 10px "Noto Serif TC", serif'; ctx.fillStyle = '#f6e3ae';
+            ctx.fillText(lv, sx + hw * 0.38, sy + hh * 0.5);
           }
         }
       }
     }
   }
-  function drawPeak(sx, sy, s, h) {
-    const w = s * 0.62;
-    ctx.fillStyle = '#8d7c5e';
-    ctx.beginPath(); ctx.moveTo(sx - w, sy); ctx.lineTo(sx - w * 0.1, sy - s * 0.95); ctx.lineTo(sx + w * 0.15, sy); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#5e5140';
-    ctx.beginPath(); ctx.moveTo(sx - w * 0.1, sy - s * 0.95); ctx.lineTo(sx + w, sy); ctx.lineTo(sx + w * 0.15, sy); ctx.closePath(); ctx.fill();
-    if (h > 0.55) {
-      ctx.fillStyle = '#d8d0bd';
-      ctx.beginPath(); ctx.moveTo(sx - w * 0.1, sy - s * 0.95); ctx.lineTo(sx - w * 0.32, sy - s * 0.62); ctx.lineTo(sx + w * 0.05, sy - s * 0.7); ctx.lineTo(sx + w * 0.22, sy - s * 0.6); ctx.closePath(); ctx.fill();
+  function drawShore(x, y, sx, sy, hw, hh) {
+    const T = Game.T.terrain;
+    const edges = [
+      [x > 0 && T[y * N + x - 1] !== TERRAIN.WATER, sx - hw, sy, sx, sy - hh],
+      [y > 0 && T[(y - 1) * N + x] !== TERRAIN.WATER, sx, sy - hh, sx + hw, sy],
+      [x < N - 1 && T[y * N + x + 1] !== TERRAIN.WATER, sx + hw, sy, sx, sy + hh],
+      [y < N - 1 && T[(y + 1) * N + x] !== TERRAIN.WATER, sx, sy + hh, sx - hw, sy],
+    ];
+    ctx.lineCap = 'round';
+    for (const [land, x1, y1, x2, y2] of edges) {
+      if (!land) continue;
+      ctx.strokeStyle = 'rgba(211,221,161,.52)'; ctx.lineWidth = Math.max(3, cam.tw * 0.09);
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo((x1 + x2) / 2, (y1 + y2) / 2 - hh * 0.12, x2, y2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(232,241,202,.68)'; ctx.lineWidth = Math.max(1, cam.tw * 0.023); ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(40,30,20,0.55)'; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.moveTo(sx - w, sy); ctx.lineTo(sx - w * 0.1, sy - s * 0.95); ctx.lineTo(sx + w, sy); ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+  function drawPeak(sx, sy, s, h) {
+    const w = s * 0.67, summit = sy - s * (0.85 + h * 0.22);
+    ctx.fillStyle = 'rgba(36,51,31,0.3)';
+    ctx.beginPath(); ctx.ellipse(sx + w * .18, sy + s * .07, w, s * .2, 0, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#879078';
+    ctx.beginPath(); ctx.moveTo(sx - w, sy); ctx.lineTo(sx - w * .14, summit); ctx.lineTo(sx + w * .25, sy); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#5f6a60';
+    ctx.beginPath(); ctx.moveTo(sx - w * .14, summit); ctx.lineTo(sx + w, sy); ctx.lineTo(sx + w * .25, sy); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#b8b5a0';
+    ctx.beginPath(); ctx.moveTo(sx - w * .14, summit); ctx.lineTo(sx - w * .39, summit + s * .36); ctx.lineTo(sx - w * .1, summit + s * .23); ctx.lineTo(sx + w * .06, summit + s * .38); ctx.lineTo(sx + w * .2, summit + s * .3); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(39,50,41,.32)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx - w * .42, sy - s * .18); ctx.lineTo(sx - w * .05, summit + s * .34); ctx.lineTo(sx + w * .18, sy - s * .12); ctx.stroke();
   }
 
   function terrKey(i) {
@@ -336,8 +425,8 @@ var Render = (function () {
     return o >= 0 ? 'p' + o : '';
   }
   function drawBorders(x0, x1, y0, y1, hw, hh) {
-    const T = Game.T;
     const segs = new Map();
+    const grid = new Map();
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         const i = y * N + x;
@@ -349,6 +438,9 @@ var Render = (function () {
         if (!onScreen(sx, sy, cam.tw)) continue;
         let arr = segs.get(col);
         if (!arr) { arr = []; segs.set(col, arr); }
+        let inner = grid.get(col);
+        if (!inner) { inner = []; grid.set(col, inner); }
+        inner.push(sx - hw, sy, sx, sy - hh, sx, sy - hh, sx + hw, sy);
         // 四邊：左上(x-1)、右上(y-1)、右下(x+1)、左下(y+1)
         if (x === 0 || terrKey(i - 1) !== k) arr.push(sx - hw, sy, sx, sy - hh);
         if (y === 0 || terrKey(i - N) !== k) arr.push(sx, sy - hh, sx + hw, sy);
@@ -356,13 +448,23 @@ var Render = (function () {
         if (y === N - 1 || terrKey(i + N) !== k) arr.push(sx, sy + hh, sx - hw, sy);
       }
     }
-    ctx.lineWidth = 2;
-    for (const [col, a] of segs) {
-      ctx.strokeStyle = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')';
+    ctx.lineWidth = Math.max(1.1, cam.tw * 0.024);
+    for (const [col, a] of grid) {
+      ctx.strokeStyle = rgb(col, 0.52);
       ctx.beginPath();
       for (let k = 0; k < a.length; k += 4) { ctx.moveTo(a[k], a[k + 1]); ctx.lineTo(a[k + 2], a[k + 3]); }
       ctx.stroke();
     }
+    ctx.lineWidth = Math.max(2.3, cam.tw * 0.047);
+    ctx.shadowBlur = 6;
+    for (const [col, a] of segs) {
+      ctx.strokeStyle = rgb(col, 0.95);
+      ctx.shadowColor = rgb(col, 0.75);
+      ctx.beginPath();
+      for (let k = 0; k < a.length; k += 4) { ctx.moveTo(a[k], a[k + 1]); ctx.lineTo(a[k + 2], a[k + 3]); }
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
   }
 
   function drawAllianceTarget(hw, hh) {
@@ -452,12 +554,17 @@ var Render = (function () {
           sub = CFG.CITY_TYPE_NAME[c.type] + ' ' + c.lvl + '級';
           if (c.alliance >= 0) sub = '〔' + g.alliances[c.alliance].name + '〕';
         }
-        const fs = pc ? 11 : major ? Math.max(12, Math.min(20, tw * 0.35)) : 12;
+        const fs = pc ? Math.max(11, Math.min(16, tw * 0.21)) : major ? Math.max(12, Math.min(20, tw * 0.3)) : 12;
         ctx.font = (major ? 'bold ' : '') + fs + 'px "LXGW WenKai TC", "Noto Serif TC", serif';
-        const ly = sy - hh * c.size - (pc ? 10 : 16);
-        const wlab = ctx.measureText(label).width + 12;
-        ctx.fillStyle = 'rgba(25,18,10,0.72)';
-        roundRect(ctx, sx - wlab / 2, ly - fs * 0.7, wlab, fs * 1.4, 4); ctx.fill();
+        const art = c.type === 'pass' ? null : cityArt[(pc || c.type === 'capital' || c.type === 'luoyang') ? 'capital' : 'town'];
+        const ly = art && art.complete && art.naturalWidth && tw >= 24
+          ? sy - tw * (c.size * 0.74 + 0.18)
+          : sy - hh * c.size - (tw >= 28 ? Math.min(48, tw * 0.52) : 16);
+        const wlab = ctx.measureText(label).width + 18;
+        ctx.fillStyle = 'rgba(22,28,20,0.85)';
+        roundRect(ctx, sx - wlab / 2, ly - fs * 0.8, wlab, fs * 1.6, 4); ctx.fill();
+        ctx.strokeStyle = 'rgba(207,177,105,0.72)'; ctx.lineWidth = 1;
+        ctx.stroke();
         ctx.fillStyle = col; ctx.fillText(label, sx, ly);
         if (sub && (tw >= 14 || major)) {
           ctx.font = '10px "Noto Serif TC", serif';
@@ -472,25 +579,79 @@ var Render = (function () {
     c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
     c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
   }
+  function drawHall(x, y, w, h, roof, ornate) {
+    // The front wall is below a two-sided tiled roof, so even small towns read
+    // as buildings rather than flat markers when the camera is zoomed in.
+    const eave = w * 0.18;
+    ctx.fillStyle = 'rgba(34,35,29,0.24)';
+    ctx.fillRect(x - w * 0.47 + 3, y - h * 0.62 + 4, w, h * 0.64);
+    ctx.fillStyle = ornate ? '#b99d70' : '#b9ac86';
+    ctx.fillRect(x - w * 0.46, y - h * 0.65, w * 0.92, h * 0.65);
+    ctx.fillStyle = '#735d45';
+    for (let k = -1; k <= 1; k++) ctx.fillRect(x + k * w * 0.25 - w * 0.035, y - h * 0.61, w * 0.07, h * 0.6);
+    ctx.fillStyle = '#3b332c';
+    ctx.fillRect(x - w * 0.12, y - h * 0.52, w * 0.24, h * 0.52);
+    ctx.fillStyle = '#4d4938';
+    ctx.fillRect(x - w * 0.38, y - h * 0.47, w * 0.12, h * 0.25);
+    ctx.fillRect(x + w * 0.26, y - h * 0.47, w * 0.12, h * 0.25);
+    ctx.fillStyle = roof;
+    ctx.beginPath(); ctx.moveTo(x - w * 0.5 - eave, y - h * 0.65); ctx.lineTo(x, y - h * 1.17); ctx.lineTo(x + w * 0.5 + eave, y - h * 0.65);
+    ctx.lineTo(x + w * 0.48, y - h * 0.48); ctx.lineTo(x, y - h * 0.94); ctx.lineTo(x - w * 0.48, y - h * 0.48); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = ornate ? '#724f42' : '#757e70';
+    ctx.beginPath(); ctx.moveTo(x - w * 0.5 - eave, y - h * 0.65); ctx.lineTo(x, y - h * 1.17); ctx.lineTo(x, y - h * 0.94); ctx.lineTo(x - w * 0.48, y - h * 0.48); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = ornate ? '#d7b46a' : '#c4bb9a'; ctx.lineWidth = Math.max(1, w * 0.035);
+    ctx.beginPath(); ctx.moveTo(x - w * 0.5 - eave, y - h * 0.65); ctx.lineTo(x, y - h * 1.17); ctx.lineTo(x + w * 0.5 + eave, y - h * 0.65); ctx.stroke();
+    if (w > 17) {
+      ctx.strokeStyle = ornate ? 'rgba(32,31,28,.48)' : 'rgba(43,52,48,.43)'; ctx.lineWidth = 1;
+      for (let k = 1; k <= 3; k++) {
+        const t = k / 4;
+        ctx.beginPath(); ctx.moveTo(x - w * (0.5 + t * 0.18), y - h * (0.65 - t * 0.11));
+        ctx.lineTo(x, y - h * (1.17 - t * 0.23));
+        ctx.lineTo(x + w * (0.5 + t * 0.18), y - h * (0.65 - t * 0.11)); ctx.stroke();
+      }
+    }
+    if (ornate && w > 23) {
+      ctx.strokeStyle = 'rgba(219,190,118,.52)'; ctx.lineWidth = 1;
+      for (let k = -2; k <= 2; k++) {
+        ctx.beginPath(); ctx.moveTo(x + k * w * 0.13, y - h * 0.81 - (2 - Math.abs(k)) * h * 0.12);
+        ctx.lineTo(x + k * w * 0.13 + w * 0.1, y - h * 0.67); ctx.stroke();
+      }
+    }
+  }
   function drawCitySprite(c, sx, sy, hw, hh, tw) {
     const s = c.size;
     const W2 = hw * s * 0.92, H2 = hh * s * 0.92;
-    const wallH = Math.max(3, tw * (c.type === 'main' || c.type === 'branch' ? 0.18 : 0.26));
+    const wallH = Math.max(3, tw * (c.type === 'main' || c.type === 'branch' ? 0.24 : 0.27));
     let flag = null;
     if (c.type === 'main' || c.type === 'branch') flag = REL_COLOR[relOfPid(c.owner)];
     else if (c.alliance >= 0) flag = Game.G.userId >= 0 ? REL_COLOR[relOfAlli(c.alliance)] : null;
-    // 城內地面
+    const art = c.type === 'pass' ? null : cityArt[(c.type === 'main' || c.type === 'branch' || c.type === 'capital' || c.type === 'luoyang') ? 'capital' : 'town'];
+    const useArt = tw >= 24 && art && art.complete && art.naturalWidth;
+    if (useArt) {
+      const width = tw * s * 1.08;
+      ctx.fillStyle = 'rgba(25,41,26,.23)';
+      ctx.beginPath(); ctx.ellipse(sx + tw * .08, sy + H2 * .42, width * .43, H2 * .8, 0, 0, 6.283); ctx.fill();
+      ctx.drawImage(art, sx - width / 2, sy + H2 + tw * .2 - width, width, width);
+    } else {
+    // Ground shadow and raised stone platform.
+    diamond(ctx, sx + tw * 0.08, sy + H2 * 0.18, W2 * 1.08, H2 * 1.08);
+    ctx.fillStyle = 'rgba(31,42,26,.28)'; ctx.fill();
     diamond(ctx, sx, sy, W2, H2);
-    ctx.fillStyle = c.type === 'pass' ? '#8f7f62' : '#a8946c';
+    ctx.fillStyle = c.type === 'pass' ? '#948968' : '#aaab7a';
     ctx.fill();
+    diamond(ctx, sx, sy - wallH * 0.3, W2 * 0.78, H2 * 0.78);
+    ctx.fillStyle = '#bdac7e'; ctx.fill();
+    ctx.strokeStyle = 'rgba(243,224,172,.5)'; ctx.lineWidth = 1; ctx.stroke();
     // 城牆（立體）
-    const wallTop = '#c7b48a', wallL = '#9a8662', wallR = '#7c6a4c';
+    const wallTop = '#d2c49e', wallL = '#9a8b69', wallR = '#726c58';
     ctx.fillStyle = wallL;
     ctx.beginPath(); ctx.moveTo(sx - W2, sy); ctx.lineTo(sx, sy + H2); ctx.lineTo(sx, sy + H2 - wallH); ctx.lineTo(sx - W2, sy - wallH); ctx.closePath(); ctx.fill();
     ctx.fillStyle = wallR;
     ctx.beginPath(); ctx.moveTo(sx, sy + H2); ctx.lineTo(sx + W2, sy); ctx.lineTo(sx + W2, sy - wallH); ctx.lineTo(sx, sy + H2 - wallH); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = wallTop; ctx.lineWidth = Math.max(1.2, tw * 0.05);
+    ctx.strokeStyle = wallTop; ctx.lineWidth = Math.max(1.2, tw * 0.052);
     diamond(ctx, sx, sy - wallH, W2, H2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(74,66,47,.4)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx - W2, sy); ctx.lineTo(sx, sy + H2); ctx.lineTo(sx + W2, sy); ctx.stroke();
     // 城垛
     if (tw >= 20) {
       ctx.fillStyle = wallTop;
@@ -503,28 +664,30 @@ var Render = (function () {
         ctx.fillRect(qx - 1.2, qy - 3, 2.4, 3);
       }
     }
-    // 城內建築
-    const nb = c.type === 'main' ? 2 : c.type === 'county' ? 3 : c.type === 'pass' ? 2 : 5;
-    for (let k = 0; k < nb; k++) {
-      const ang = (k / nb) * 6.283 + 0.6;
-      const rr = k === 0 ? 0 : 0.42;
-      const bx = sx + Math.cos(ang) * W2 * rr, by = sy - wallH * 0.3 + Math.sin(ang) * H2 * rr;
-      const bw = tw * (c.type === 'luoyang' ? 0.55 : c.type === 'capital' ? 0.45 : 0.3) * (k === 0 ? 1.3 : 0.85), bh = bw * 0.7;
-      // 屋身
-      ctx.fillStyle = '#d9c9a0';
-      ctx.fillRect(bx - bw / 2, by - bh, bw, bh);
-      // 屋頂
-      ctx.fillStyle = k === 0 && (c.type === 'luoyang' || c.type === 'capital') ? '#8c2d1e' : '#3c3a3a';
-      ctx.beginPath(); ctx.moveTo(bx - bw * 0.7, by - bh); ctx.lineTo(bx, by - bh - bw * 0.45); ctx.lineTo(bx + bw * 0.7, by - bh); ctx.closePath(); ctx.fill();
-      if (c.type === 'luoyang' && k === 0) {
-        ctx.fillStyle = '#b8932e';
-        ctx.fillRect(bx - bw * 0.5, by - bh * 1.9, bw, bh * 0.5);
-        ctx.fillStyle = '#8c2d1e';
-        ctx.beginPath(); ctx.moveTo(bx - bw * 0.6, by - bh * 1.9); ctx.lineTo(bx, by - bh * 2.4); ctx.lineTo(bx + bw * 0.6, by - bh * 1.9); ctx.closePath(); ctx.fill();
+    if (tw >= 22) {
+      const grand = c.type === 'main' || c.type === 'branch' || c.type === 'capital' || c.type === 'luoyang';
+      const ornate = grand || c.type === 'commandery';
+      const roof = ornate ? '#55453d' : '#5b625e';
+      // Houses behind the central hall, then a gate and two corner towers.
+      drawHall(sx - W2 * 0.42, sy - H2 * 0.3 - wallH * 0.32, tw * 0.3, tw * 0.3, roof, false);
+      drawHall(sx + W2 * 0.4, sy - H2 * 0.25 - wallH * 0.32, tw * 0.3, tw * 0.3, roof, false);
+      drawHall(sx, sy - H2 * 0.2 - wallH * 0.38, tw * (grand ? 0.8 : 0.55), tw * (grand ? 0.8 : 0.53), roof, ornate);
+      if (grand && tw >= 38) drawHall(sx, sy - H2 * 0.24 - wallH * 0.38 - tw * 0.62, tw * 0.46, tw * 0.42, '#514039', true);
+      if (s >= 3) {
+        drawHall(sx - W2 * 0.38, sy + H2 * 0.28 - wallH * 0.3, tw * 0.29, tw * 0.26, '#5c5d51', false);
+        drawHall(sx + W2 * 0.38, sy + H2 * 0.28 - wallH * 0.3, tw * 0.29, tw * 0.26, '#5c5d51', false);
       }
+      drawHall(sx - W2 * 0.68, sy + H2 * 0.05 - wallH * 0.35, tw * 0.22, tw * 0.26, '#51544e', false);
+      drawHall(sx + W2 * 0.67, sy + H2 * 0.05 - wallH * 0.35, tw * 0.22, tw * 0.26, '#51544e', false);
+      ctx.fillStyle = '#514a37';
+      ctx.fillRect(sx - tw * 0.13, sy + H2 * 0.68 - wallH, tw * 0.26, wallH * 0.96);
+      ctx.fillStyle = '#252a25';
+      ctx.fillRect(sx - tw * 0.085, sy + H2 * 0.69 - wallH * 0.65, tw * 0.17, wallH * 0.65);
+      drawHall(sx, sy + H2 * 0.58 - wallH, tw * 0.38, tw * 0.27, '#52473f', false);
+    }
     }
     // 關口城門
-    if (c.type === 'pass') {
+    if (c.type === 'pass' && !useArt) {
       ctx.fillStyle = '#3b2c1c';
       ctx.fillRect(sx - tw * 0.12, sy + H2 * 0.3 - wallH, tw * 0.24, wallH);
     }
