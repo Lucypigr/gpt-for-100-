@@ -277,7 +277,6 @@ var RateEarthSystems = (function () {
       return season().id === 'winter' ? v * 0.5 : v;
     };
 
-    patchBuild('upgradeBuilding', args => args[0] ? args[0].cityTile : -1);
     patchBuild('buildFort', args => +args[1]);
     patchBuild('buildCamp', args => +args[1]);
     patchBuild('buildBranch', args => +args[1]);
