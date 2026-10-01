@@ -43,3 +43,31 @@ const winterSiege = CFG.siegeValue(1000, 10);
 near(winterSiege, springSiege * 0.5, 1e-6, '冬季耐久減傷');
 
 console.log('Rate-earth systems OK: scout + weather values + spring/winter season effects');
+
+// 特殊天氣：第一週不產生；公開的持續時間與災害延遲必須精確落在原規則。
+for (let st = 0; st < World.states.length; st++) ok(RateEarthSystems.specialEventForState(6, st, Game.G.seed) === null, '第一週不應有特殊天氣');
+const found = {};
+for (let d = 7; d < 220; d++) for (let st = 0; st < World.states.length; st++) {
+  const ev = RateEarthSystems.specialEventForState(d, st, Game.G.seed);
+  if (ev && !found[ev.type]) found[ev.type] = ev;
+}
+for (const type of ['blizzard', 'freezing_rain', 'fog', 'storm']) ok(found[type], '未生成特殊天氣樣本: ' + type);
+for (const type of Object.keys(found)) {
+  const ev = found[type], def = RateEarthSystems.SPECIAL[type];
+  ok(ev.end - ev.start >= def.durMin && ev.end - ev.start <= def.durMax, type + ' 持續時間超出公開範圍');
+  ok(ev.hazardStart - ev.start === def.delay, type + ' 災害形成延遲錯誤');
+  ok(ev.hazardEnd - ev.end === def.tail, type + ' 災害消退延遲錯誤');
+}
+
+// 災害實際規則：洪災封鎖土地指令；積雪封鎖屯田/練兵；大霧/冰凍/積雪士氣-10，洪災-20。
+const flood = found.storm; Game.G.time = flood.hazardStart; ok(RateEarthSystems.hazardAt(flood.center).id === 'flood', '洪災未形成');
+ok(/洪災/.test(RateEarthSystems.commandBlock(flood.center, 'attack')), '洪災應封鎖土地指令');
+near(RateEarthSystems.adjustMorale(100, flood.center, false), 80, 1e-9, '洪災士氣');
+const snow = found.blizzard; Game.G.time = snow.hazardStart; ok(/積雪/.test(RateEarthSystems.commandBlock(snow.center, 'farm')), '積雪應封鎖屯田');
+ok(/積雪/.test(RateEarthSystems.commandBlock(snow.center, 'train')), '積雪應封鎖練兵');
+near(RateEarthSystems.adjustMorale(100, snow.center, false), 90, 1e-9, '積雪士氣');
+near(RateEarthSystems.adjustMorale(100, snow.center, true), 100, 1e-9, '建築內不應套用積雪-10');
+const fog = found.fog; Game.G.time = fog.hazardStart; near(RateEarthSystems.adjustMorale(100, fog.center, false), 90, 1e-9, '大霧士氣');
+const ice = found.freezing_rain; Game.G.time = ice.hazardStart; near(RateEarthSystems.adjustMorale(100, ice.center, false), 90, 1e-9, '冰凍士氣');
+
+console.log('Extreme weather OK: first-week guard + exact durations/delays + flood/snow/fog/ice effects');
