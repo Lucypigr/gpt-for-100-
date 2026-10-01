@@ -1730,7 +1730,7 @@ var AI = (function () {
     // 小盟盟主解散投靠大盟
     if (p.alliance >= 0) {
       const a = G().alliances[p.alliance];
-      if (a.leader === p.id && a.members.length < 3 && Game.day() >= 2 && a.cities.length === 0) {
+      if (a.leader === p.id && a.members.length < 3 && Game.day() >= 2 && a.cities.length === 0 && persona(p) !== 'raider') {
         p.prof.leader = false;
         delete mem(p).createAt;
         Game.leaveAlliance(p);
