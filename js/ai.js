@@ -1861,7 +1861,14 @@ var AI = (function () {
       if (!c || c.dead || c.type!=='pass' || !c.link || !c.link.includes(q.state)) continue;
       if (c.alliance===a.id || sameBloc(c.alliance,a.id) || Game.cityLockedDay(c)>Game.day()) continue;
       if (c.alliance>=0 && treatyActive(a.id,c.alliance)) continue;
-      if (!reachable(a,c)) continue;
+      // 關口就在同盟領地旁邊時直接視為可封鎖；這比從城池反向 BFS 更可靠，
+      // 也符合「已鋪到關口腳下就能下令封關」的實際情境。
+      let touches=false, around=[];
+      for (const t of c.tiles) {
+        World.neighbors8(t,around);
+        if (around.some(n=>Game.tileAlliance(n)===a.id && World.linked(n,t))) { touches=true; break; }
+      }
+      if (!touches && !reachable(a,c)) continue;
       const ctr=c.tiles[(c.tiles.length/2)|0], d=World.dist(ctr,q.cityTile);
       const score=420-d*5+(c.alliance===q.alliance?180:0)+(c.alliance<0?70:0)+U.rnd()*20;
       if (score>bs) {bs=score;best=c;}
