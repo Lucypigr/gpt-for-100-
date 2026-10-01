@@ -74,7 +74,7 @@ const ice = found.freezing_rain; Game.G.time = ice.hazardStart; near(RateEarthSy
 console.log('Extreme weather OK: first-week guard + exact durations/delays + flood/snow/fog/ice effects');
 
 
-// 風向/風力與風災：官方公開效果為風力>=4、屯田/練兵/計略耗時+30%、行軍距離上限50。
+// 風向/風力與風災：官方公開條件為風力>4；效果為屯田/練兵/計略耗時+30%、行軍距離上限50、駐守縮至中心1格。
 const winds = {};
 for (let d = 7; d < 500 && (!winds.sandstorm || !winds.windstorm); d++) {
   for (let st = 0; st < World.states.length; st++) {
@@ -85,12 +85,12 @@ for (let d = 7; d < 500 && (!winds.sandstorm || !winds.windstorm); d++) {
 ok(winds.sandstorm && winds.windstorm, '應能產生沙塵暴與風災樣本');
 for (const k of ['sandstorm', 'windstorm']) {
   const ev = winds[k];
-  ok(ev.wind.level >= 4, k + ' 風力應至少4級');
+  ok(ev.wind.level > 4, k + ' 風力應大於4級');
   ok(['clear','cloudy','overcast'].includes(RateEarthSystems.weatherIdFor(ev.day, ev.stateId, Game.G.seed)), k + ' 天氣條件錯誤');
   Game.G.time = ev.start;
   near(RateEarthSystems.actionTimeFactor(ev.center, 'train'), 1.30, 1e-9, k + ' 練兵風阻');
-  near(RateEarthSystems.adjustMorale(100, ev.center, false), 80, 1e-9, k + ' 非建築領地士氣');
-  near(RateEarthSystems.adjustMorale(100, ev.center, true), 100, 1e-9, k + ' 建築內不套用鼓餒旗靡');
+  near(RateEarthSystems.adjustMorale(100, ev.center, false), 100, 1e-9, k + ' 公開風災規則未包含額外士氣扣減');
+  near(RateEarthSystems.adjustMorale(100, ev.center, true), 100, 1e-9, k + ' 建築內同樣不額外扣士氣');
 }
 
 // 江河凝凍：冬季豪雪/凍雨災害中的非州界河流可通行、可佔領，解凍後自動失去河面領地。
