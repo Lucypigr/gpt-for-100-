@@ -62,7 +62,8 @@ for (const type of Object.keys(found)) {
 // 災害實際規則：洪災封鎖土地指令；積雪封鎖屯田/練兵；大霧/冰凍/積雪士氣-10，洪災-20。
 const flood = found.storm; Game.G.time = flood.hazardStart; ok(RateEarthSystems.hazardAt(flood.center).id === 'flood', '洪災未形成');
 ok(/洪災/.test(RateEarthSystems.commandBlock(flood.center, 'attack')), '洪災應封鎖土地指令');
-near(RateEarthSystems.adjustMorale(100, flood.center, false), 80, 1e-9, '洪災士氣');
+near(RateEarthSystems.adjustMorale(100, flood.center, true), 80, 1e-9, '洪災建築所屬部隊士氣');
+near(RateEarthSystems.adjustMorale(100, flood.center, false), 100, 1e-9, '洪災不應對非建築領地套同一士氣狀態');
 const snow = found.blizzard; Game.G.time = snow.hazardStart; ok(/積雪/.test(RateEarthSystems.commandBlock(snow.center, 'farm')), '積雪應封鎖屯田');
 ok(/積雪/.test(RateEarthSystems.commandBlock(snow.center, 'train')), '積雪應封鎖練兵');
 near(RateEarthSystems.adjustMorale(100, snow.center, false), 90, 1e-9, '積雪士氣');
