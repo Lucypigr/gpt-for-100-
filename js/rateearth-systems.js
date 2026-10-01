@@ -238,6 +238,7 @@ var RateEarthSystems = (function () {
   function moralePenalty(tile, isBuilding) {
     const hz = hazardAt(tile);
     if (!hz) return 0;
+    if (hz.id === 'flood') return isBuilding ? -20 : 0;
     if ((hz.id === 'fog' || hz.id === 'ice' || hz.id === 'snow' || hz.id === 'sandstorm' || hz.id === 'windstorm') && isBuilding) return 0;
     return HAZARD_MORALE[hz.id] || 0;
   }
