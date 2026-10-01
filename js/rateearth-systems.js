@@ -32,7 +32,7 @@ var RateEarthSystems = (function () {
     fog: { name: '局部霧', icon: '🌫', hazard: 'fog', hazardName: '大霧', durMin: 120, durMax: 180, delay: 60, tail: 60 },
     storm: { name: '局部暴雨', icon: '⛈', hazard: 'flood', hazardName: '洪災', durMin: 180, durMax: 360, delay: 120, tail: 120 },
   };
-  const HAZARD_MORALE = { fog: -10, ice: -10, snow: -10, flood: -20, sandstorm: -20, windstorm: -20 };
+  const HAZARD_MORALE = { fog: -10, ice: -10, snow: -10, flood: -20 };
   const WIND_DIRS = [
     { name: '北風', dx: 0, dy: -1 }, { name: '東北風', dx: 1, dy: -1 },
     { name: '東風', dx: 1, dy: 0 }, { name: '東南風', dx: 1, dy: 1 },
@@ -154,14 +154,14 @@ var RateEarthSystems = (function () {
     const base = weatherIdFor(day, stateId, seed);
     if (!['clear', 'cloudy', 'overcast'].includes(base)) return null;
     const wind = windFor(day, stateId, seed);
-    if (wind.level < 4) return null;
+    if (wind.level <= 4) return null;
     const st = typeof World !== 'undefined' && World.states ? World.states[stateId] : null;
     if (!st) return null;
     const s = seasonForDay(day).id;
     const north = NORTH_STATES.has(st.name);
     let type = null;
     if (north && (s === 'spring' || s === 'winter')) type = 'sandstorm';
-    if (!north && (s === 'summer' || s === 'autumn')) type = 'windstorm';
+    if (!north && (s === 'spring' || s === 'autumn')) type = 'windstorm';
     if (!type) return null;
     // 官方只公開「有一定機率」及效果，未公開自動風災的觸發率、持續時長與局部半徑。
     // 因此觸發/時段/範圍採種子固定模擬；下方 +30%、50格、1格防守範圍才是公開原值。
@@ -241,7 +241,7 @@ var RateEarthSystems = (function () {
     const hz = hazardAt(tile);
     if (!hz) return 0;
     if (hz.id === 'flood') return isBuilding ? -20 : 0;
-    if ((hz.id === 'fog' || hz.id === 'ice' || hz.id === 'snow' || hz.id === 'sandstorm' || hz.id === 'windstorm') && isBuilding) return 0;
+    if ((hz.id === 'fog' || hz.id === 'ice' || hz.id === 'snow') && isBuilding) return 0;
     return HAZARD_MORALE[hz.id] || 0;
   }
   function adjustMorale(base, tile, isBuilding) { return Math.max(0, (base === undefined ? 100 : base) + moralePenalty(tile, isBuilding)); }
