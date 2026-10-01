@@ -1174,7 +1174,23 @@ var UI = (function () {
     }
     if (panelArg && panelArg.learn) {
       o += '<div class="sec-t" style="font-size:15px">選擇要學習的戰法</div><div class="muted" style="font-size:12px">新學的戰法從 1 級開始；更換或遺忘會返還原戰法 ' + Math.round(CFG.SKILL_REFUND * 100) + '% 已投入戰法點。</div>';
+
+      if (typeof TACTIC_RECOMMENDATIONS !== 'undefined') {
+        const recs = TACTIC_RECOMMENDATIONS.forHero(t);
+        if (recs.length) {
+          o += '<div style="margin:10px 0 6px;padding:9px 10px;border:1px solid #80673c;background:rgba(128,103,60,.08);border-radius:4px"><b>推薦戰法</b><span class="muted" style="font-size:11px">　依武將定位、自帶戰法與常見搭配整理</span></div>';
+          o += recs.map(r => {
+            const owned = user.lib.includes(r.id), equipped = h.sk.includes(r.id);
+            const sk = SKILLS[r.id], usable = !sk.troops || sk.troops.includes(t.troop);
+            const state = equipped ? '已裝備' : owned && usable ? '點擊裝備' : !usable ? '兵種不符' : '未擁有';
+            const click = owned && usable && !equipped ? ' style="cursor:pointer;border-color:#9b7c3d" data-act="learn" data-k="' + panelArg.learn + '" data-sid="' + r.id + '"' : '';
+            return '<div class="skslot"' + click + '><span class="sn q-' + sk.q + '">' + E(r.tier) + '・' + sk.name + '</span><span class="st">' + TY[sk.type] + '</span><span class="' + (owned ? 'good' : 'muted') + '" style="font-size:11px">' + state + '</span><div class="sd">' + E(r.reason) + '</div></div>';
+          }).join('');
+        }
+      }
+
       const opts = user.lib.filter(id => !h.sk.includes(id)).map(id => SKILLS[id]).filter(sk => !sk.troops || sk.troops.includes(t.troop));
+      o += '<div class="sec-t" style="font-size:14px">全部可學戰法</div>';
       o += opts.map(sk => '<div class="skslot" style="cursor:pointer" data-act="learn" data-k="' + panelArg.learn + '" data-sid="' + sk.id + '"><span class="sn q-' + sk.q + '">' + sk.name + '</span><span class="st">' + TY[sk.type] + '</span><div class="sd">' + sk.desc + '</div></div>').join('') || '<div class="muted">沒有可學習的戰法（可透過傳承獲得，A/S 級戰法需演練至 100%）</div>';
     }
     // 進階/傳承
