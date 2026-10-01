@@ -45,17 +45,19 @@ var AI = (function () {
       };
     }).map(assignPersonaInit(n)).map(finalizeTraits);
   }
-  // 個性（與技術類型無關）：梟雄、好戰者、叛徒、火爆鄰居、龜縮
+  // 個性（與技術類型無關）：梟雄、好戰者、劫掠客、叛徒、火爆鄰居、龜縮
   const PERSONA = {
-    overlord: { label: '梟雄' }, warmonger: { label: '好戰者' }, traitor: { label: '叛徒' },
+    overlord: { label: '梟雄' }, warmonger: { label: '好戰者' }, raider: { label: '劫掠客' }, traitor: { label: '叛徒' },
     hothead: { label: '火爆' }, turtle: { label: '龜縮' }, normal: { label: '一般' },
   };
   function assignPersonaInit(n) {
-    const quota = { overlord: Math.max(1, Math.round(n / 75)), warmonger: Math.max(2, Math.round(n / 25)), traitor: Math.max(2, Math.round(n / 30)) };
-    const used = { overlord: 0, warmonger: 0, traitor: 0 };
+    // 劫掠客是少數但可辨識的樣態：約每 80 名 AI 一位，500 人局約 6 位。
+    const quota = { overlord: Math.max(1, Math.round(n / 75)), raider: Math.max(1, Math.round(n / 80)), warmonger: Math.max(2, Math.round(n / 25)), traitor: Math.max(2, Math.round(n / 30)) };
+    const used = { overlord: 0, raider: 0, warmonger: 0, traitor: 0 };
     return pr => {
       const t = pr.type;
       if (used.overlord < quota.overlord && (t === 'whale' || t === 'veteran')) { used.overlord++; return setPersona(pr, 'overlord'); }
+      if (used.raider < quota.raider && (t === 'veteran' || t === 'regular' || t === 'whale')) { used.raider++; return setPersona(pr, 'raider'); }
       if (used.warmonger < quota.warmonger && t !== 'newbie' && t !== 'casual') { used.warmonger++; return setPersona(pr, 'warmonger'); }
       if (used.traitor < quota.traitor && t !== 'newbie') { used.traitor++; return setPersona(pr, 'traitor'); }
       const r = U.rnd();
@@ -68,6 +70,7 @@ var AI = (function () {
     pr.persona = k;
     if (k === 'overlord') { pr.skill = Math.max(pr.skill, 0.95); pr.aggr = Math.max(pr.aggr, 0.8); pr.gold += 20000; pr.daily = Math.max(pr.daily, 3000); pr.act = Math.min(pr.act, 3); pr.chat = Math.max(pr.chat, 0.9); }
     if (k === 'warmonger') { pr.aggr = 1; pr.skill = Math.max(pr.skill, 0.7); pr.chat = Math.max(pr.chat, 0.9); }
+    if (k === 'raider') { pr.aggr = Math.max(pr.aggr, 0.82); pr.skill = Math.max(pr.skill, 0.62); pr.chat = Math.max(pr.chat, 0.95); pr.loyalty = Math.max(pr.loyalty, 0.55); }
     if (k === 'traitor') { pr.loyalty = 0; }
     if (k === 'hothead') { pr.aggr = Math.max(pr.aggr, 0.65); pr.chat = Math.max(pr.chat, 0.8); }
     if (k === 'turtle') { pr.aggr = 0.02; }
@@ -108,6 +111,7 @@ var AI = (function () {
     const k = pr.persona || 'normal';
     if (k === 'overlord') { t.aggressive += 18; t.warlike += 12; t.diplomatic += 8; t.cautious -= 8; t.opportunistic += 12; t.courageous += 18; t.ambitious += 30; }
     if (k === 'warmonger') { t.aggressive += 24; t.warlike += 30; t.cautious -= 18; t.diplomatic -= 12; t.courageous += 22; t.ambitious += 12; }
+    if (k === 'raider') { t.aggressive += 18; t.deceitful += 12; t.warlike += 18; t.opportunistic += 30; t.honorable -= 28; t.diplomatic -= 18; t.cautious -= 15; t.courageous += 8; t.ambitious += 20; }
     if (k === 'traitor') { t.deceitful += 30; t.opportunistic += 28; t.honorable -= 42; t.diplomatic += 8; t.courageous += 6; t.ambitious += 18; }
     if (k === 'hothead') { t.aggressive += 18; t.warlike += 14; t.vengeful += 20; t.cautious -= 14; t.courageous += 16; }
     if (k === 'turtle') { t.cautious += 32; t.aggressive -= 25; t.warlike -= 20; t.honorable += 10; t.courageous -= 25; t.ambitious -= 12; }
@@ -126,6 +130,20 @@ var AI = (function () {
     return pairs.filter(x => t[x[0]] >= 68).sort((a,b)=>t[b[0]]-t[a[0]]).slice(0,3).map(x=>x[1]);
   }
   function persona(p) { return p.prof.persona || 'normal'; }
+  function isRaider(p) {
+    if (!p || !p.prof) return false;
+    if (persona(p) === 'raider') return true;
+    if (p.alliance >= 0) {
+      const a = G().alliances[p.alliance], leader = a && Game.P[a.leader];
+      return !!(leader && leader.ai && leader.prof && persona(leader) === 'raider');
+    }
+    return false;
+  }
+  function raiderInfamyOfAlliance(a) {
+    if (!a || a.dead) return 0;
+    const L = Game.P[a.leader];
+    return Math.max(a.raiderInfamy || 0, L && L.prof ? (L.prof.raiderInfamy || 0) : 0);
+  }
   // 同一陣營：同盟相同，或有從屬（附庸）關係
   function sameBloc(a1, a2) {
     if (a1 < 0 || a2 < 0) return false;
@@ -249,8 +267,9 @@ var AI = (function () {
         .sort((a, b) => (b.prof.skill + (b.prof.type === 'whale' ? 0.3 : 0)) - (a.prof.skill + (a.prof.type === 'whale' ? 0.3 : 0)));
       if (arr.length) { arr[0].prof.leader = true; mem(arr[0]).createAt = U.rint(20, 240); }
     }
-    // 梟雄一定自立門戶，而且很早開盟
+    // 梟雄與劫掠客都傾向自立門戶；劫掠客會較早成盟，之後拉人一起騷擾弱者。
     for (const p of P) if (p.ai && persona(p) === 'overlord') { p.prof.leader = true; mem(p).createAt = U.rint(10, 90); }
+    for (const p of P) if (p.ai && persona(p) === 'raider') { p.prof.leader = true; mem(p).createAt = U.rint(25, 140); }
     // 額外幾位想自立門戶的玩家
     const extra = U.shuffle(P.filter(p => p.ai && !p.prof.leader && (p.prof.type === 'whale' || p.prof.type === 'veteran' || p.prof.type === 'regular'))).slice(0, 3);
     for (const p of extra) { p.prof.leader = true; mem(p).createAt = U.rint(200, 900); }
@@ -686,6 +705,7 @@ var AI = (function () {
       // 2) 報復 / 征服（領地已滿時更傾向搶奪他人高級地）
       let pvpP = pr.aggr * (p.landCount >= p.landCap - 2 ? 1 : 0.6);
       if (activeFeud(p)) pvpP = Math.max(pvpP, 0.7);
+      if (isRaider(p)) pvpP = Math.max(pvpP, 0.88);
       if (persona(p) === 'turtle') pvpP = 0;
       if (target < 0 && U.rnd() < pvpP) target = pvpTarget(p, team, tp);
       // 3) 擴張
@@ -884,7 +904,7 @@ var AI = (function () {
     if (raid && raid.score > Math.max(150, bs + 35)) return raid.tile;
     if (best >= 0 && bs > 150) return best;
     // 攻打弱小鄰居主城（課長/老手）
-    if (pr.aggr > 0.6 && (pr.skill > 0.5 || persona(p) === 'hothead') && g.time > CFG.PROTECT_DAYS * 1440) {
+    if ((pr.aggr > 0.6 || isRaider(p)) && (pr.skill > 0.5 || persona(p) === 'hothead' || isRaider(p)) && g.time > CFG.PROTECT_DAYS * 1440) {
       const m = mem(p);
       if (m.conquest >= 0) {
         const op = Game.P[m.conquest];
