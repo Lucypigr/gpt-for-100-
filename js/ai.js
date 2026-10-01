@@ -160,8 +160,12 @@ var AI = (function () {
   }
   function personMemory(p, qid) {
     const m = mem(p), k = String(qid);
-    if (!m.people[k]) m.people[k] = { trust: 0, hate: 0, grudge: 0, harm: 0, help: 0, cooperation: 0, betrayals: 0, kept: 0, gifts: 0, last: -99999, lastInteraction: -99999 };
-    const r = m.people[k];
+    // aiMem 是短期決策快取，存檔時會被清掉；外交記憶必須是長期人格的一部分。
+    // 舊版若已在 aiMem.people 有資料，第一次存取時搬到可持久化的 aiRelations。
+    if (!p.aiRelations) p.aiRelations = {};
+    if (!p.aiRelations[k] && m.people && m.people[k]) p.aiRelations[k] = Object.assign({}, m.people[k]);
+    if (!p.aiRelations[k]) p.aiRelations[k] = { trust: 0, hate: 0, grudge: 0, harm: 0, help: 0, cooperation: 0, betrayals: 0, kept: 0, gifts: 0, last: -99999, lastInteraction: -99999 };
+    const r = p.aiRelations[k];
     if (r.grudge === undefined) r.grudge = r.hate || 0;
     if (r.cooperation === undefined) r.cooperation = r.help || 0;
     if (r.lastInteraction === undefined) r.lastInteraction = r.last === undefined ? -99999 : r.last;
