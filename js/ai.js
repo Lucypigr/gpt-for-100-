@@ -95,8 +95,9 @@ var AI = (function () {
       vengeful: clampTrait(U.rrange(12, 92)),
       honorable: clampTrait(U.rrange(15, 95)),
       opportunistic: clampTrait(U.rrange(12, 92)),
-      courageous: clampTrait(pr.aggr * 45 + pr.skill * 28 + U.rrange(5, 42)),
-      ambitious: clampTrait(pr.skill * 28 + pr.aggr * 32 + U.rrange(12, 58)),
+      // 由既有 profile 導出，不額外消耗全局 RNG；這樣加入新人格維度不會改變既有地圖/配將/AI 行為序列。
+      courageous: clampTrait(pr.aggr * 55 + pr.skill * 30 + 8),
+      ambitious: clampTrait(pr.skill * 35 + pr.aggr * 35 + (1 - pr.loyalty) * 15 + 10),
     };
     const k = pr.persona || 'normal';
     if (k === 'overlord') { t.aggressive += 18; t.warlike += 12; t.diplomatic += 8; t.cautious -= 8; t.opportunistic += 12; t.courageous += 18; t.ambitious += 30; }
