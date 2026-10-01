@@ -29,7 +29,7 @@ var AI = (function () {
     while (out.length < n) out.push('regular');
     out.length = n;
     U.shuffle(out);
-    return out.map(type => {
+    const profiles = out.map(type => {
       const d = TYPES[type];
       return {
         type, label: d.label,
@@ -44,6 +44,9 @@ var AI = (function () {
         persona: 'normal',
       };
     }).map(assignPersonaInit(n)).map(finalizeTraits);
+    // 「劫掠客」是可疊加在原本人格上的玩家樣態，使用獨立 deterministic 選擇，
+    // 不額外消耗全局 RNG，避免新增樣態後改變既有地圖、武將與測試 seed。
+    return assignRaiderArchetypes(profiles, n);
   }
   // 個性（與技術類型無關）：梟雄、好戰者、劫掠客、叛徒、火爆鄰居、龜縮
   const PERSONA = {
@@ -51,13 +54,11 @@ var AI = (function () {
     hothead: { label: '火爆' }, turtle: { label: '龜縮' }, normal: { label: '一般' },
   };
   function assignPersonaInit(n) {
-    // 劫掠客是少數但可辨識的樣態：約每 80 名 AI 一位，500 人局約 6 位。
-    const quota = { overlord: Math.max(1, Math.round(n / 75)), raider: Math.max(1, Math.round(n / 80)), warmonger: Math.max(2, Math.round(n / 25)), traitor: Math.max(2, Math.round(n / 30)) };
-    const used = { overlord: 0, raider: 0, warmonger: 0, traitor: 0 };
+    const quota = { overlord: Math.max(1, Math.round(n / 75)), warmonger: Math.max(2, Math.round(n / 25)), traitor: Math.max(2, Math.round(n / 30)) };
+    const used = { overlord: 0, warmonger: 0, traitor: 0 };
     return pr => {
       const t = pr.type;
       if (used.overlord < quota.overlord && (t === 'whale' || t === 'veteran')) { used.overlord++; return setPersona(pr, 'overlord'); }
-      if (used.raider < quota.raider && (t === 'veteran' || t === 'regular' || t === 'whale')) { used.raider++; return setPersona(pr, 'raider'); }
       if (used.warmonger < quota.warmonger && t !== 'newbie' && t !== 'casual') { used.warmonger++; return setPersona(pr, 'warmonger'); }
       if (used.traitor < quota.traitor && t !== 'newbie') { used.traitor++; return setPersona(pr, 'traitor'); }
       const r = U.rnd();
@@ -120,6 +121,39 @@ var AI = (function () {
     pr.reputation = pr.reputation === undefined ? 50 : pr.reputation;
     return pr;
   }
+  function stableHash(s) {
+    let h=2166136261>>>0;
+    for (let i=0;i<s.length;i++) { h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+    return h>>>0;
+  }
+  function applyRaiderArchetype(pr) {
+    if (!pr || pr.archetype==='raider') return pr;
+    pr.archetype='raider';
+    pr.aggr=Math.max(pr.aggr,0.82);
+    pr.skill=Math.max(pr.skill,0.62);
+    pr.chat=Math.max(pr.chat,0.95);
+    pr.loyalty=Math.max(pr.loyalty,0.55);
+    const t=finalizeTraits(pr).traits;
+    t.aggressive=clampTrait(t.aggressive+18);
+    t.deceitful=clampTrait(t.deceitful+12);
+    t.warlike=clampTrait(t.warlike+18);
+    t.opportunistic=clampTrait(t.opportunistic+30);
+    t.honorable=clampTrait(t.honorable-28);
+    t.diplomatic=clampTrait(t.diplomatic-18);
+    t.cautious=clampTrait(t.cautious-15);
+    t.courageous=clampTrait(t.courageous+8);
+    t.ambitious=clampTrait(t.ambitious+20);
+    return pr;
+  }
+  function assignRaiderArchetypes(profiles,n) {
+    const quota=n<40?0:Math.max(1,Math.round(n/80));
+    if (!quota) return profiles;
+    const eligible=profiles.map((pr,i)=>({pr,i,h:stableHash([pr.type,pr.skill,pr.act,pr.aggr,pr.daily,pr.gold,pr.loyalty,pr.persona].join('|'))}))
+      .filter(x=>['regular','veteran','whale'].includes(x.pr.type)&&x.pr.persona!=='overlord'&&x.pr.persona!=='turtle')
+      .sort((a,b)=>a.h-b.h||a.i-b.i);
+    for (const x of eligible.slice(0,quota)) applyRaiderArchetype(x.pr);
+    return profiles;
+  }
   function traits(p) { return finalizeTraits(p.prof).traits; }
   function personalityTags(p) {
     const t = traits(p), pairs = [
@@ -130,12 +164,13 @@ var AI = (function () {
     return pairs.filter(x => t[x[0]] >= 68).sort((a,b)=>t[b[0]]-t[a[0]]).slice(0,3).map(x=>x[1]);
   }
   function persona(p) { return p.prof.persona || 'normal'; }
+  function raiderSelf(p) { return !!(p&&p.prof&&(p.prof.archetype==='raider'||raiderSelf(p))); }
   function isRaider(p) {
     if (!p || !p.prof) return false;
-    if (persona(p) === 'raider') return true;
+    if (raiderSelf(p)) return true;
     if (p.alliance >= 0) {
       const a = G().alliances[p.alliance], leader = a && Game.P[a.leader];
-      return !!(leader && leader.ai && leader.prof && persona(leader) === 'raider');
+      return !!(leader && leader.ai && raiderSelf(leader));
     }
     return false;
   }
@@ -269,7 +304,7 @@ var AI = (function () {
     }
     // 梟雄與劫掠客都傾向自立門戶；劫掠客會較早成盟，之後拉人一起騷擾弱者。
     for (const p of P) if (p.ai && persona(p) === 'overlord') { p.prof.leader = true; mem(p).createAt = U.rint(10, 90); }
-    for (const p of P) if (p.ai && persona(p) === 'raider') { p.prof.leader = true; mem(p).createAt = U.rint(25, 140); }
+    for (const p of P) if (p.ai && raiderSelf(p)) { p.prof.leader = true; mem(p).createAt = U.rint(25, 140); }
     // 額外幾位想自立門戶的玩家
     const extra = U.shuffle(P.filter(p => p.ai && !p.prof.leader && (p.prof.type === 'whale' || p.prof.type === 'veteran' || p.prof.type === 'regular'))).slice(0, 3);
     for (const p of extra) { p.prof.leader = true; mem(p).createAt = U.rint(200, 900); }
@@ -330,7 +365,7 @@ var AI = (function () {
       const same = a.members.filter(id => Game.P[id].state === p.state).length;
       const L = Game.P[a.leader];
       let style = 1;
-      if (L && L.ai && L.prof && persona(L) === 'raider') {
+      if (L && L.ai && L.prof && raiderSelf(L)) {
         const t = traits(p);
         style = Math.max(0.15, Math.min(1.6, 0.15 + t.warlike / 85 + t.opportunistic / 110 - t.honorable / 180 - t.diplomatic / 220));
       }
@@ -1265,7 +1300,7 @@ var AI = (function () {
   }
   function styleSummary(p) {
     const tags=personalityTags(p);
-    if (persona(p) === 'raider') return '劫掠客' + (tags.length ? '・' + tags.slice(0,2).join('・') : '');
+    if (raiderSelf(p)) return '劫掠客' + (tags.length ? '・' + tags.slice(0,2).join('・') : '');
     if (tags.length) return tags.join('・');
     const t=traits(p);
     if (t.diplomatic>=60) return '偏外交';
@@ -1276,7 +1311,7 @@ var AI = (function () {
   function reputationSummary(p) {
     const rep=(p&&p.prof&&p.prof.reputation===undefined)?50:((p&&p.prof&&p.prof.reputation)||50);
     const inf=(p&&p.prof&&p.prof.raiderInfamy)||0;
-    if (persona(p)==='raider' || inf>=24) return '劫掠惡名';
+    if (raiderSelf(p) || inf>=24) return '劫掠惡名';
     if (rep>=72) return '守約';
     if (rep>=48) return '普通';
     if (rep>=28) return '反覆';
@@ -1353,7 +1388,7 @@ var AI = (function () {
   function inviteUser(a, leader) {
     const g = G();
     const u = Game.P[g.userId];
-    if (u.alliance >= 0 || !leader.ai || a.members.length >= CFG.ALLIANCE_MAX || persona(leader) === 'raider') return;
+    if (u.alliance >= 0 || !leader.ai || a.members.length >= CFG.ALLIANCE_MAX || raiderSelf(leader)) return;
     if (!g.invites) g.invites = [];
     if (g.invites.some(x => x.a === a.id)) return;
     const d = Math.hypot(World.X(u.cityTile) - World.X(leader.cityTile), World.Y(u.cityTile) - World.Y(leader.cityTile));
@@ -1370,7 +1405,7 @@ var AI = (function () {
       if (now !== undefined && (now + a.id * 7) % 30 !== 0) continue; // 各同盟錯開思考，避免卡頓
       const leader = Game.P[a.leader];
       finalizeTraits(leader.prof);
-      if (leader.ai && persona(leader)==='raider') chooseRaiderVictim(a,leader);
+      if (leader.ai && raiderSelf(leader)) chooseRaiderVictim(a,leader);
       diplomacyThink(a, leader);
       inviteUser(a, leader);
       if (!leader.ai) recruitForUser(a);
@@ -1380,7 +1415,7 @@ var AI = (function () {
         if (city.alliance === a.id || sameBloc(city.alliance, a.id) || Game.cityLockedDay(city) > Game.day()) { a.target = -1; a.field = null; a.pave = null; }
       }
       if (a.target < 0 && leader.ai && a.members.length >= 3 && g.time >= (a.nextChoose || 0)) {
-        if (persona(leader)==='raider') chooseRaiderPassTarget(a,leader);
+        if (raiderSelf(leader)) chooseRaiderPassTarget(a,leader);
         if (a.target < 0) chooseTarget(a);
         if (a.target < 0) a.nextChoose = g.time + 150; // 找不到目標時稍後再議
       }
@@ -1843,7 +1878,7 @@ var AI = (function () {
     let q=null;
     if (a) {
       const L=Game.P[a.leader];
-      if (L===p && persona(p)==='raider') q=chooseRaiderVictim(a,p);
+      if (L===p && raiderSelf(p)) q=chooseRaiderVictim(a,p);
       else q=Game.P[a.raiderVictim];
     }
     if (!q || q.captor>=0 || g.time<q.protectEnd) return;
@@ -1860,14 +1895,14 @@ var AI = (function () {
   function raiderDisplay(attacker) {
     if (attacker && attacker.alliance>=0) {
       const a=G().alliances[attacker.alliance], L=a&&Game.P[a.leader];
-      if (a&&L&&L.prof&&persona(L)==='raider') return '〔'+a.name+'〕';
+      if (a&&L&&L.prof&&raiderSelf(L)) return '〔'+a.name+'〕';
     }
     return attacker?attacker.name:'未知勢力';
   }
   function recordRaiderIncident(victim, attacker, amount) {
     if (!victim || !attacker || victim===attacker || !isRaider(attacker)) return;
     const g=G(), a=attacker.alliance>=0?g.alliances[attacker.alliance]:null;
-    const key=a&&Game.P[a.leader]&&persona(Game.P[a.leader])==='raider'?'a'+a.id:'p'+attacker.id;
+    const key=a&&Game.P[a.leader]&&raiderSelf(Game.P[a.leader])?'a'+a.id:'p'+attacker.id;
     if (!victim.raiderAbuse) victim.raiderAbuse={};
     const r=victim.raiderAbuse[key]||(victim.raiderAbuse[key]={score:0,last:-99999,reports:0});
     r.score+=amount; r.last=g.time;
@@ -2127,7 +2162,7 @@ var AI = (function () {
   }
 
   return {
-    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp, isRaider, raiderInfamyOfAlliance,
+    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp, isRaider, raiderSelf, raiderInfamyOfAlliance,
     allianceMemory, treatyActive, makePact, breakPact, declareWar, diplomacyThink, diplomacyTargetBias, warIntentScore, backstabIntentScore,
     diplomacyOffersFor, respondDiplomacyOffer,
     sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
