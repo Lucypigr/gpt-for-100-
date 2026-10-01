@@ -1,9 +1,8 @@
 'use strict';
 
-// Make resource land readable at a glance: level 1 is clean grass, then
-// visible resource density grows step-by-step with the land level.
-// This is deliberately a rendering-only layer; resource type, output and
-// combat rules remain untouched.
+// Resource-land visual rule:
+// L1 = clean grass. From L2 upward, each level adds visible resource mass.
+// Gameplay data is untouched; this layer only changes map presentation.
 (function () {
   const proto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
   if (!proto || proto.__resourceDensityPatched) return;
@@ -11,8 +10,6 @@
   const nativeDrawImage = proto.drawImage;
   const terrainAtlas = /(?:^|\/)assets\/terrain-details\.png(?:[?#].*)?$/;
 
-  // Relative placements inside one isometric tile. Higher levels reveal more
-  // clusters rather than merely enlarging the same picture.
   const spots = [
     [ 0.00,  0.02, 1.00],
     [-0.22,  0.10, 0.78],
@@ -34,11 +31,11 @@
   }
 
   function baseScale(level) {
-    // L2 starts deliberately sparse; every tier becomes visibly richer.
     return [0, 0, 0.40, 0.47, 0.55, 0.61, 0.67, 0.72, 0.77, 0.82][Math.min(9, Math.max(0, level))];
   }
 
   proto.drawImage = function (image, ...args) {
+    // terrain-details.png uses image + 8 arguments (source rect + destination rect).
     if (!(image instanceof HTMLImageElement) || args.length !== 8) {
       return nativeDrawImage.call(this, image, ...args);
     }
@@ -50,12 +47,12 @@
     }
 
     const [srcX, srcY, srcW, srcH, dx, dy, dw, dh] = args;
-    // drawTerrainSprite anchors its artwork at y - h * .82.
     const anchorX = dx + dw * 0.5;
     const anchorY = dy + dh * 0.82;
     const tile = Render.tileAt(anchorX, anchorY);
+
+    // Mountains still use the original rock artwork and are not resource land.
     if (tile < 0 || Game.T.terrain[tile] !== TERRAIN.PLAIN) {
-      // Mountains and all non-resource terrain keep their original art.
       return nativeDrawImage.call(this, image, ...args);
     }
 
@@ -63,19 +60,17 @@
     const resource = Game.T.res[tile];
     const count = clusterCount(level);
 
-    // Level 1 is intentionally just grass: no trees, ore, stones or fields.
+    // Level 1 has no props at all: visually it is plain grass.
     if (count === 0) return;
 
-    // Force each resource to use one consistent visual family. This prevents
-    // random scrub from making low-level resource land look as busy as high
-    // level land. RES order: wood, iron, stone, grain.
+    // RES order: wood, iron, stone, grain.
     const half = image.naturalWidth / 2;
     let sx = srcX, sy = srcY;
     if (half > 0) {
-      if (resource === 0) { sx = 0;    sy = 0; }       // wood: forest
-      else if (resource === 1) { sx = half; sy = 0; } // iron: ore/rock
-      else if (resource === 2) { sx = half; sy = 0; } // stone: rocks
-      else if (resource === 3) { sx = 0;    sy = half; } // grain: fields
+      if (resource === 0) { sx = 0; sy = 0; }          // trees
+      else if (resource === 1) { sx = half; sy = 0; } // iron/ore
+      else if (resource === 2) { sx = half; sy = 0; } // stone
+      else if (resource === 3) { sx = 0; sy = half; } // fields
     }
 
     const scale = baseScale(level);
@@ -86,13 +81,8 @@
       const h = dh * s;
       const cx = anchorX + ox * dw;
       const ay = anchorY + oy * dh;
-      nativeDrawImage.call(
-        this, image,
-        sx, sy, srcW, srcH,
-        cx - w * 0.5,
-        ay - h * 0.82,
-        w, h
-      );
+      nativeDrawImage.call(this, image, sx, sy, srcW, srcH,
+        cx - w * 0.5, ay - h * 0.82, w, h);
     }
   };
 
