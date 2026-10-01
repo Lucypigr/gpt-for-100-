@@ -24,6 +24,8 @@ jobs:
         run: node tests/ai-strategy.js
       - name: Warfare regression test
         run: node tests/warfare.js
+      - name: Rate-earth systems regression test
+        run: node tests/rateearth-systems.js
       - name: Economy test
         run: node tests/economy.js
       - name: Save/load test
