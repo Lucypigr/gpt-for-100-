@@ -13,8 +13,6 @@
     const n=World.N;
     if(image.width!==n||image.height!==n)return false;
     const m=ctx.getTransform();
-    // The ownership overlay is drawn with the isometric world transform:
-    // x axis = (a,b), y axis = (-a,b). Ignore minimap/other N×N canvases.
     if(Math.abs(m.a+m.c)>.05||Math.abs(m.b-m.d)>.05||Math.abs(m.a)<2)return false;
     nativeDrawImage.call(ctx,image,...args);
     const tw=typeof Render!=='undefined'&&Render.cam?Render.cam.tw:48;
@@ -36,10 +34,7 @@
   }
 
   proto.drawImage=function(image,...args){
-    // Draw a crisp diamond border around every land tile after the ownership
-    // overlay, but before cities, marches and selection effects.
     if(drawTileGrid(this,image,args))return;
-
     if(!(image instanceof HTMLImageElement)||args.length!==8)return nativeDrawImage.call(this,image,...args);
     const src=image.getAttribute('src')||image.src||'';
     if(!terrainAtlas.test(src)||typeof Render==='undefined'||!Render.tileAt||typeof Game==='undefined'||!Game.T||typeof TERRAIN==='undefined')return nativeDrawImage.call(this,image,...args);
@@ -50,7 +45,17 @@
     const half=image.naturalWidth/2;let sx=srcX,sy=srcY;
     if(half>0){if(res===0){sx=0;sy=0;}else if(res===1||res===2){sx=half;sy=0;}else if(res===3){sx=0;sy=half;}}
     const scale=scaleFor(level);
-    for(let n=0;n<count;n++){const[ox,oy,local]=spots[n],s=scale*local,w=dw*s,h=dh*s,cx=ax+ox*dw,cy=ay+oy*dh;nativeDrawImage.call(this,image,sx,sy,srcW,srcH,cx-w*.5,cy-h*.82,w,h);}
+    this.save();
+    // Iron reads as compact dark metallic ore; stone stays broader and pale.
+    if(res===1)this.filter='brightness(.68) saturate(.55) contrast(1.22)';
+    else if(res===2)this.filter='brightness(1.14) saturate(.42) contrast(.94)';
+    for(let n=0;n<count;n++){
+      const[ox,oy,local]=spots[n];
+      const family=res===1?.86:res===2?1.06:1;
+      const s=scale*local*family,w=dw*s,h=dh*s,cx=ax+ox*dw,cy=ay+oy*dh;
+      nativeDrawImage.call(this,image,sx,sy,srcW,srcH,cx-w*.5,cy-h*.82,w,h);
+    }
+    this.restore();
   };
   proto.__resourceDensityPatched=true;
 })();
