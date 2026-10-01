@@ -339,13 +339,15 @@ var Game = (function () {
     }
   }
   function allianceBonus(p) {
-    if (p.alliance < 0) return 0;
+    // 《率土》淪陷勢力暫時失去原同盟加成；流浪軍也不享有普通同盟加成。
+    if (p.alliance < 0 || p.captor >= 0 || p.wanderer) return 0;
     const a = G.alliances[p.alliance];
     let b = 0;
     for (const cid of a.cities) {
       const c = World.cities[cid];
       b += c.type === 'luoyang' ? 0.12 : c.type === 'capital' ? 0.05 : c.type === 'commandery' ? 0.025 : 0.01;
     }
+    if (typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.levelBonus) b += RateAllianceSystems.levelBonus(a);
     return Math.min(0.5, b);
   }
   function recompute(p) {
@@ -354,12 +356,15 @@ var Game = (function () {
     const bonus = 1 + allianceBonus(p);
     const bmap = ['lumber', 'ironw', 'quarry', 'farm'];
     const prod = {};
-    CFG.RES.forEach((r, k) => { prod[r] = Math.round((base + p.b[bmap[k]] * 150 + p.landProd[k]) * bonus); });
+    CFG.RES.forEach((r, k) => {
+      // 流浪軍不取得領地資源產量；其資源主要依靠掠奪。
+      const land = p.wanderer ? 0 : p.landProd[k];
+      prod[r] = Math.round((base + p.b[bmap[k]] * 150 + land) * bonus);
+    });
     let nb = 0;
     for (const id of (p.branches || [])) { const bc = World.cities[id]; if (!bc.dead && !(bc.building > G.time)) nb++; }
     if (nb) CFG.RES.forEach(r => { prod[r] += Math.round(CFG.BRANCH_OUTPUT * nb * bonus); });
     prod.copper = 200 + p.b.house * 250;
-    if (p.captor >= 0) for (const r of CFG.RES) prod[r] = Math.round(prod[r] * (1 - CFG.TRIBUTE_PCT));
     p.prod = prod;
     p.cap = 30000 + p.b.warehouse * 22000 + p.b.palace * 4000;
     p.landCap = CFG.landCap(p.fame);
@@ -533,6 +538,11 @@ var Game = (function () {
   function isFriendly(p, i) {
     const o = tileOwner(i);
     if (o === p.id) return true;
+    if (o >= 0 && typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.friendOverride) {
+      const v = RateAllianceSystems.friendOverride(p, P[o]);
+      if (v !== null && v !== undefined) return !!v;
+    }
+    if (p.captor >= 0) return false;
     if (p.alliance < 0) return false;
     return tileAlliance(i) === p.alliance;
   }
@@ -554,10 +564,17 @@ var Game = (function () {
   // 可否攻擊（回傳原因字串或 ''）
   function attackBlock(p, i) {
     if (!World.isPassable(i)) return '無法到達（山脈/河流）';
-    if (isFriendly(p, i)) return '我方領地';
     const c = T.city[i];
+    const preCity = c >= 0 ? World.cities[c] : null;
+    const rescue = !!(preCity && preCity.type === 'main' && typeof RateAllianceSystems !== 'undefined' &&
+      RateAllianceSystems.canRescue && RateAllianceSystems.canRescue(p, P[preCity.owner]));
+    if (isFriendly(p, i) && !rescue) return '我方領地';
+    if (typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.capturedAllyLandBlock) {
+      const cb = RateAllianceSystems.capturedAllyLandBlock(p, i);
+      if (cb) return cb;
+    }
     if (c >= 0) {
-      const city = World.cities[c];
+      const city = preCity;
       if (city.type === 'main') {
         const o = P[city.owner];
         if (G.time < o.protectEnd) return '對方主城處於保護期';
@@ -1165,11 +1182,17 @@ var Game = (function () {
       if (city.dur <= 0) {
         city.dur = Math.round(city.maxDur * 0.5);
         city.garrison = null;
-        o.captor = p.id; o.captureEnd = G.time + CFG.CAPTURE_HOURS * 60;
+        // 未淪陷的原同盟盟友可攻破被俘主城進行解救。
+        if (typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.canRescue && RateAllianceSystems.canRescue(p, o)) {
+          RateAllianceSystems.releaseCaptive(o, 'rescue', p);
+          return '成功解救 ' + o.name + '！';
+        }
+        o.captor = p.id; o.captureEnd = 0;
         G.fallCount = (G.fallCount || 0) + 1;
-        recompute(o);
+        if (typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.onCaptured) RateAllianceSystems.onCaptured(o, p);
+        else recompute(o);
         sys('world', '【淪陷】' + (p.alliance >= 0 ? '〔' + G.alliances[p.alliance].name + '〕' : '') + p.name + ' 攻陷了 ' + o.name + ' 的主城！');
-        if (o.id === G.userId) notify(o.id, '主城淪陷！你成為【' + p.name + '】的俘虜，將上繳 20% 資源 ' + CFG.CAPTURE_HOURS + ' 小時', 'bad');
+        if (o.id === G.userId) notify(o.id, '主城淪陷！你成為【' + p.name + '】的俘虜。可等待盟友解救、支付資源反叛，或轉為流浪軍。', 'bad');
         if (o.ai) AI.onCaptured(o, p);
         return '攻陷主城！';
       }
@@ -1240,6 +1263,8 @@ var Game = (function () {
   // ================= 同盟 =================
   const ALLI_COLORS = ['#e0463a', '#3a7be0', '#e0b93a', '#9b4ae0', '#3ac7c7', '#e07a3a', '#7ae03a', '#e03a9b', '#3ae08a', '#b5b5b5', '#8a6a3a', '#3a4ae0', '#c73a5a', '#5ac73a', '#e0e03a', '#3aa0e0'];
   function createAlliance(p, name) {
+    if (p.wanderer) return err('流浪軍只能建立義勇軍');
+    if (p.captor >= 0) return err('淪陷期間不能建立同盟');
     if (p.alliance >= 0) return err('已在同盟中');
     if (!name || name.length > 8) return err('同盟名稱需 1~8 字');
     if (G.alliances.some(a => !a.dead && a.name === name)) return err('名稱已被使用');
@@ -1256,6 +1281,8 @@ var Game = (function () {
   function joinAlliance(p, aid, force) {
     const a = G.alliances[aid];
     if (!a || a.dead) return err('同盟不存在');
+    if (p.wanderer) return err('流浪軍只能加入義勇軍');
+    if (p.captor >= 0) return err('淪陷期間不能加入同盟');
     if (p.alliance >= 0) return err('已在同盟中');
     if (a.members.length >= CFG.ALLIANCE_MAX) return err('同盟人數已滿');
     if (!force && !a.open) return err('該同盟不接受申請');
@@ -1270,6 +1297,7 @@ var Game = (function () {
     return ok();
   }
   function leaveAlliance(p) {
+    if (p.captor >= 0) return err('淪陷期間不能直接退出同盟');
     if (p.alliance < 0) return err('不在同盟中');
     const a = G.alliances[p.alliance];
     a.members = a.members.filter(x => x !== p.id);
@@ -1341,11 +1369,12 @@ var Game = (function () {
       p.copper += p.prod.copper / 60;
       if (p.captor >= 0) {
         const cp = P[p.captor];
-        for (const r of CFG.RES) cp.res[r] = Math.min(Math.max(cp.cap, cp.res[r]), cp.res[r] + p.prod[r] * CFG.TRIBUTE_PCT / (1 - CFG.TRIBUTE_PCT) / 60);
-        if (now >= p.captureEnd || cp.alliance >= 0 && cp.alliance === p.alliance) {
-          p.captor = -1; p.protectEnd = Math.max(p.protectEnd, now + 120);
+        // 《率土》淪陷不是固定12小時自動解除，也不是持續20%產量稅。
+        // 只有上級失效/同盟關係異常時做保護性釋放；正常脫離靠反叛、盟友解救或流浪。
+        if (!cp || (cp.alliance >= 0 && cp.alliance === p.alliance)) {
+          p.captor = -1; p.captureEnd = 0; p.protectEnd = Math.max(p.protectEnd, now + 120);
           recompute(p);
-          notify(p.id, '你已擺脫淪陷狀態，主城獲得 2 小時保護', 'good');
+          notify(p.id, '淪陷狀態已解除，主城獲得 2 小時保護', 'good');
         }
       }
       // 建造完成
