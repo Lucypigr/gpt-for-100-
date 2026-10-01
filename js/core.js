@@ -1001,8 +1001,12 @@ var Game = (function () {
         if (!tm.slots[0]) continue;
         const bh = heroByUid(q, tm.slots[0]);
         if (!bh || bh.troops <= 0) continue;
-        if (tm.status === 'garrison' && (tm.gtile === i || (isCity && city.tiles.includes(tm.gtile)))) out.push({ p: q, team: tm });
-        else if (tm.status === 'idle' && isCity && city.tiles.includes(tm.base)) out.push({ p: q, team: tm });
+        if (tm.status === 'garrison') {
+          const covers = (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.garrisonCovers)
+            ? RateEarthSystems.garrisonCovers(tm.gtile, i)
+            : tm.gtile === i;
+          if (covers || (isCity && city.tiles.includes(tm.gtile))) out.push({ p: q, team: tm });
+        } else if (tm.status === 'idle' && isCity && city.tiles.includes(tm.base)) out.push({ p: q, team: tm });
       }
     }
     return out;
