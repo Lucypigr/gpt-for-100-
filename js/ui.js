@@ -455,7 +455,9 @@ var UI = (function () {
         }
         if (frozenRiver && T.owner[i] === user.id) h += '<br><button class="btn dark" data-act="abandon">放棄河面領地</button>';
       }
-      if (city && !World.isPlayerCity(city) && user.alliance >= 0 && G.alliances[user.alliance].leader === user.id && city.alliance !== user.alliance)
+      if (city && !World.isPlayerCity(city) && user.alliance >= 0 &&
+          (typeof RateAllianceSystems === 'undefined' ? G.alliances[user.alliance].leader === user.id : RateAllianceSystems.canCommand(user, G.alliances[user.alliance])) &&
+          city.alliance !== user.alliance)
         h += '<button class="btn gold" data-act="settarget" data-c="' + city.id + '">設為同盟目標</button>';
       h += '</div>';
       if (!friendly && why) h += '<div class="why">' + why + '</div>';
@@ -572,10 +574,11 @@ var UI = (function () {
       case 'relocate': { const r = Game.relocate(user, tileSel); if (r.ok) { toast('遷城完成！', 'good'); tilePopMode = 'info'; closeTile(); goto(user.cityTile, 56); } else toast(r.msg, 'warn'); break; }
       case 'settarget': {
         const a = G.alliances[user.alliance];
+        if (!a || (typeof RateAllianceSystems !== 'undefined' && !RateAllianceSystems.canCommand(user, a))) { toast('只有盟主、副盟主或指揮官可下達攻城目標', 'warn'); break; }
         a.target = +d.c; a.targetSince = G.time; a.phase = 'pave'; a.field = null;
         AI.alliancesThink();
         const c = World.cities[a.target];
-        Game.say(user, 'ally', '【盟主令】全盟目標：' + CFG.CITY_TYPE_NAME[c.type] + '【' + c.name + '】(' + c.cx + ',' + c.cy + ')，大家鋪路集結！');
+        Game.say(user, 'ally', '【同盟軍令】全盟目標：' + CFG.CITY_TYPE_NAME[c.type] + '【' + c.name + '】(' + c.cx + ',' + c.cy + ')，大家鋪路集結！');
         toast('已設定同盟目標：' + c.name, 'good');
         renderTilePop();
         break;
@@ -672,7 +675,7 @@ var UI = (function () {
         toast(r.ok ? '同盟〔' + name + '〕創建成功！' : r.msg, r.ok ? 'good' : 'warn'); refreshPanel(); break;
       }
       case 'leave': if (ask('確定退出同盟？')) { const r = Game.leaveAlliance(user); toast(r.ok ? '已退出同盟' : r.msg); refreshPanel(); } break;
-      case 'cleartarget': { const a = G.alliances[user.alliance]; a.target = -1; a.field = null; a.pave = null; a.phase = ''; refreshPanel(); break; }
+      case 'cleartarget': { const a = G.alliances[user.alliance]; if (typeof RateAllianceSystems !== 'undefined' && !RateAllianceSystems.canCommand(user, a)) { toast('只有盟主、副盟主或指揮官可取消軍令', 'warn'); break; } a.target = -1; a.field = null; a.pave = null; a.phase = ''; refreshPanel(); break; }
       case 'claim': { const q = QUESTS.find(x => x.id === d.q); const r = Game.claimQuest(user, q); toast(r.ok ? '領取獎勵：' + rewardText(q.reward) : r.msg, r.ok ? 'good' : 'warn'); refreshPanel(); break; }
       case 'olock': Mobile.lock(d.o).then(ok => { toast(ok ? '已鎖定' + (d.o === 'portrait' ? '直屏' : '橫屏') : '此瀏覽器不支援鎖定螢幕方向', ok ? 'good' : 'warn'); refreshPanel(true); }); break;
       case 'ounlock': Mobile.unlock(); toast('已解除方向鎖定', 'info'); refreshPanel(true); break;
@@ -778,7 +781,7 @@ var UI = (function () {
         ['名望', U.fmtFull(user.fame)], ['領地', user.landCount + '/' + user.landCap],
         ['資源上限', U.fmtFull(user.cap)], ['統御上限', Game.costCap(user).toFixed(1)],
         ['部隊數', user.teams.length + '/5'], ['武將帶兵上限', '+' + user.b.barracks * 200],
-        ['同盟加成', '+' + Math.round(Game.allianceBonus(user) * 100) + '%'], ['主城狀態', user.captor >= 0 ? '<span class="bad">淪陷(' + U.fmtDur(user.captureEnd - G.time) + ')</span>' : G.time < user.protectEnd ? '<span class="good">保護中 ' + U.fmtDur(user.protectEnd - G.time) + '</span>' : '正常'],
+        ['同盟加成', '+' + Math.round(Game.allianceBonus(user) * 100) + '%'], ['主城狀態', user.captor >= 0 ? '<span class="bad">淪陷／俘虜</span>' : user.wanderer ? '<span class="warn">流浪軍</span>' : G.time < user.protectEnd ? '<span class="good">保護中 ' + U.fmtDur(user.protectEnd - G.time) + '</span>' : '正常'],
       ];
       for (const r of CFG.RES) stat.push([CFG.RES_NAME[r] + '產量', '+' + U.fmtFull(user.prod[r]) + '/時']);
       stat.push(['銅幣稅收', '+' + U.fmtFull(user.prod.copper) + '/時']);
@@ -851,6 +854,10 @@ var UI = (function () {
         h += '<div><span>總兵力</span><span>' + U.fmtFull(Game.teamTroops(user, t)) + '/' + U.fmtFull(Game.teamCapTroops(user, t)) + '</span></div>';
         h += '<div><span>行軍速度</span><span>' + Math.round(Game.teamSpeed(user, t)) + '（每格 ' + CFG.minPerTile(Game.teamSpeed(user, t)).toFixed(1) + ' 分）</span></div>';
         h += '<div><span>戰力評估</span><span>' + U.fmt(Game.teamPower(user, t)) + '</span></div>';
+        if (typeof RateAllianceSystems !== 'undefined') {
+          const sg = RateAllianceSystems.siegeOfTeam(user, t);
+          h += '<div><span>攻城值</span><span class="' + (sg >= 60 ? 'good' : '') + '">' + Math.round(sg) + (sg >= 60 ? '　拆遷隊' : '') + '</span></div>';
+        }
         const hs = Game.teamHeroes(user, t).filter(Boolean);
         if (hs.length === 3) {
           const tf = hs.map(x => Game.tpl(x));
@@ -948,6 +955,7 @@ var UI = (function () {
     },
 
     alliance() {
+      if (user.wanderer && typeof RateAllianceSystems !== 'undefined') return RateAllianceSystems.militiaPanel(user);
       if (user.alliance < 0) {
         let h = '';
         const inv = (G.invites || []).filter(x => G.alliances[x.a] && !G.alliances[x.a].dead);
@@ -963,20 +971,25 @@ var UI = (function () {
       }
       const a = G.alliances[user.alliance];
       const tab = panelTab || 'info';
-      let h = '<div class="alli-head"><div class="alli-flag" style="background:' + a.color + '">' + E(a.name.slice(0, 1)) + '</div><div><div class="alli-name">〔' + E(a.name) + '〕</div><div class="muted">盟主 ' + E(Game.P[a.leader].name) + '　成員 ' + a.members.length + '/' + CFG.ALLIANCE_MAX + '　城池 ' + a.cities.length + '　積分 ' + Game.alliancePoints(a) + '　勢力 ' + U.fmt(a.power) + '</div><div class="muted">城池產量加成 +' + Math.round(Game.allianceBonus(user) * 100) + '%</div></div><div style="margin-left:auto"><button class="btn small dark" data-act="leave">退出同盟</button></div></div>';
+      const alv = typeof RateAllianceSystems !== 'undefined' ? RateAllianceSystems.ensureAlliance(a).level : 1;
+      let h = '<div class="alli-head"><div class="alli-flag" style="background:' + a.color + '">' + E(a.name.slice(0, 1)) + '</div><div><div class="alli-name">〔' + E(a.name) + '〕</div><div class="muted">Lv.' + alv + '　盟主 ' + E(Game.P[a.leader].name) + '　成員 ' + a.members.length + '/' + CFG.ALLIANCE_MAX + '　城池 ' + a.cities.length + '　積分 ' + Game.alliancePoints(a) + '　勢力 ' + U.fmt(a.power) + '</div><div class="muted">同盟總產量加成 +' + Math.round(Game.allianceBonus(user) * 100) + '%</div></div><div style="margin-left:auto"><button class="btn small dark" data-act="leave"' + (user.captor >= 0 ? ' disabled title="淪陷期間不能直接退盟"' : '') + '>退出同盟</button></div></div>';
       h += tabs([['info', '戰略'], ['members', '成員'], ['cities', '城池']], tab);
       if (tab === 'info') {
         if (a.target >= 0) {
           const c = World.cities[a.target];
           h += '<div class="target-box"><b>當前目標：</b>' + CFG.CITY_TYPE_NAME[c.type] + '【' + c.name + '】Lv.' + c.lvl + ' <span class="link" data-act="gototile" data-tile="' + c.tiles[(c.tiles.length / 2) | 0] + '">(' + c.cx + ',' + c.cy + ')</span>　階段：' + (a.phase === 'siege' ? '<span class="bad">攻城中</span>' + (a.rallyAt > G.time ? '（集結倒數 ' + U.fmtDur(a.rallyAt - G.time) + '）' : '') : '<span class="warn">鋪路中</span>') + '<br>耐久 ' + Math.round(c.dur) + '/' + c.maxDur;
-          if (a.leader === user.id) h += ' <button class="btn small dark" data-act="cleartarget">取消目標</button>';
+          if (typeof RateAllianceSystems === 'undefined' ? a.leader === user.id : RateAllianceSystems.canCommand(user, a)) h += ' <button class="btn small dark" data-act="cleartarget">取消目標</button>';
           h += '<div class="muted" style="margin-top:4px">鋪路：佔領通往目標的土地（地圖上黃色虛線格）。路通後全盟集結，先擊敗守軍，再以兵力拆除耐久。</div></div>';
-        } else h += '<div class="target-box">目前沒有同盟目標。' + (a.leader === user.id ? '你是盟主：點選地圖上的城池，選「設為同盟目標」。' : '等待盟主下令。') + '</div>';
+        } else h += '<div class="target-box">目前沒有同盟目標。' + ((typeof RateAllianceSystems === 'undefined' ? a.leader === user.id : RateAllianceSystems.canCommand(user, a)) ? '你具有軍令權限：點選地圖上的城池，選「設為同盟目標」。' : '等待盟主、副盟主或指揮官下令。') + '</div>';
         h += '<div class="sec-t">同盟頻道（最近）</div><div class="blog" style="max-height:260px">' + (G.chat.ally[a.id] || []).slice(-30).map(m => '<div>' + (m.sys ? '<span class="warn">' + E(m.text) + '</span>' : '<span class="good">' + E(m.name) + '</span>：' + E(m.text)) + '</div>').join('') + '</div>';
       } else if (tab === 'members') {
         const ms = a.members.map(id => Game.P[id]).sort((x, y) => y.power - x.power);
         h += '<table class="tbl"><tr><th>#</th><th>主公</th><th>職位</th><th>勢力</th><th>名望</th><th>領地</th><th>所在州</th><th>主城</th></tr>';
-        ms.forEach((q, k) => { h += '<tr class="' + (q.id === user.id ? 'me' : '') + '"><td>' + (k + 1) + '</td><td>' + E(q.name) + '</td><td>' + (a.leader === q.id ? '<span class="warn">盟主</span>' : '成員') + '</td><td>' + U.fmt(q.power) + '</td><td>' + U.fmt(q.fame) + '</td><td>' + q.landCount + '</td><td>' + World.states[q.state].name + '</td><td><span class="link" data-act="gotoplayer" data-pid="' + q.id + '">(' + World.X(q.cityTile) + ',' + World.Y(q.cityTile) + ')</span>' + (q.captor >= 0 ? ' <span class="bad">淪陷</span>' : '') + '</td></tr>'; });
+        ms.forEach((q, k) => {
+          const rn = typeof RateAllianceSystems !== 'undefined' ? RateAllianceSystems.roleName(q, a) : (a.leader === q.id ? '盟主' : '盟員');
+          const contrib = typeof RateAllianceSystems !== 'undefined' ? (RateAllianceSystems.ensureAlliance(a).contrib[q.id] || 0) : 0;
+          h += '<tr class="' + (q.id === user.id ? 'me' : '') + '"><td>' + (k + 1) + '</td><td>' + E(q.name) + '</td><td>' + (rn === '盟主' || rn === '副盟主' || rn === '指揮官' ? '<span class="warn">' + rn + '</span>' : rn) + '<br><span class="muted">貢獻 ' + U.fmt(contrib) + '</span></td><td>' + U.fmt(q.power) + '</td><td>' + U.fmt(q.fame) + '</td><td>' + q.landCount + '</td><td>' + World.states[q.state].name + '</td><td><span class="link" data-act="gotoplayer" data-pid="' + q.id + '">(' + World.X(q.cityTile) + ',' + World.Y(q.cityTile) + ')</span>' + (q.captor >= 0 ? ' <span class="bad">淪陷</span>' : q.wanderer ? ' <span class="warn">流浪</span>' : '') + '</td></tr>';
+        });
         h += '</table>';
       } else {
         h += '<table class="tbl"><tr><th>城池</th><th>類型</th><th>等級</th><th>州</th><th>耐久</th><th>座標</th></tr>';
