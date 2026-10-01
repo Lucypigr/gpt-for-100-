@@ -328,7 +328,13 @@ var AI = (function () {
     if (!cands.length) return;
     const best = U.weighted(cands, a => {
       const same = a.members.filter(id => Game.P[id].state === p.state).length;
-      return (same * 4 + 1) * (1 + a.power / 50000) * (a.state === p.state ? 3 : 0.3) * (a.members.length > 32 ? 0.3 : 1);
+      const L = Game.P[a.leader];
+      let style = 1;
+      if (L && L.ai && L.prof && persona(L) === 'raider') {
+        const t = traits(p);
+        style = Math.max(0.15, Math.min(1.6, 0.15 + t.warlike / 85 + t.opportunistic / 110 - t.honorable / 180 - t.diplomatic / 220));
+      }
+      return (same * 4 + 1) * (1 + a.power / 50000) * (a.state === p.state ? 3 : 0.3) * (a.members.length > 32 ? 0.3 : 1) * style;
     });
     if (best) {
       Game.joinAlliance(p, best.id);
@@ -866,6 +872,7 @@ var AI = (function () {
     const g = G();
     const T = Game.T;
     const pr = p.prof;
+    const raider = isRaider(p), rv = raiderVictimId(p);
     // 仇人
     let foe = -1, ft = -1;
     for (const k in p.grudge) { if (g.time - p.grudge[k] < 720 && p.grudge[k] > ft) { ft = p.grudge[k]; foe = +k; } }
@@ -896,7 +903,15 @@ var AI = (function () {
       let v = L * 60 + (o === foe ? 400 : 0) + (op.alliance >= 0 && isEnemyAlliance(p, op.alliance) ? 150 : 0) - World.dist(i, team.base) * 5;
       if (!guardPower && enemyEta > myEta + 5) v += 80;
       if (mem(p).conquest === o) v += Math.max(0, 220 - World.dist(i, op.cityTile) * 18);
-      if (op.power > p.power * 1.5 && o !== foe && persona(p) !== 'warmonger') v -= 200; // 不惹強者（好戰者例外）
+      if (raider) {
+        const sameVictimAlliance = rv >= 0 && Game.P[rv] && Game.P[rv].alliance >= 0 && op.alliance === Game.P[rv].alliance;
+        if (o === rv) v += 680 + Math.max(0, 16 - World.dist(i, op.cityTile)) * 20;
+        else if (sameVictimAlliance) v += 380;
+        const weakEdge = p.power / Math.max(1, op.power);
+        v += Math.max(-180, Math.min(220, (weakEdge - 1) * 150)); // 劫掠客偏好明顯弱於自己的對手
+        if (rv >= 0 && o !== rv && !sameVictimAlliance && op.power > p.power * 1.05) v -= 320;
+      }
+      if (op.power > p.power * 1.5 && o !== foe && persona(p) !== 'warmonger' && !raider) v -= 200; // 不惹強者（好戰者例外）
       if (p.landCount >= p.landCap && L < 5) continue;
       if (v > bs) { bs = v; best = i; }
     }
@@ -1236,9 +1251,10 @@ var AI = (function () {
 
   function warIntentScore(a,b,leader) {
     const t=traits(leader), r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
-    const powerEdge=(ratio-1)*55;
+    const powerEdge=(ratio-1)*55, infamy=raiderInfamyOfAlliance(b);
+    const antiRaider=infamy*Math.max(0,(t.honorable+t.diplomatic*0.7-t.opportunistic*0.45)/180);
     return t.aggressive*0.28+t.warlike*0.34+t.opportunistic*0.16+t.ambitious*0.18+t.courageous*0.16+
-      r.hate*0.34+r.grudge*0.30+pressure*0.32+powerEdge-r.trust*0.32-r.cooperation*0.08-
+      r.hate*0.34+r.grudge*0.30+pressure*0.32+powerEdge+antiRaider-r.trust*0.32-r.cooperation*0.08-
       t.cautious*0.27-t.diplomatic*0.13;
   }
   function backstabIntentScore(a,b,leader) {
@@ -1249,6 +1265,7 @@ var AI = (function () {
   }
   function styleSummary(p) {
     const tags=personalityTags(p);
+    if (persona(p) === 'raider') return '劫掠客' + (tags.length ? '・' + tags.slice(0,2).join('・') : '');
     if (tags.length) return tags.join('・');
     const t=traits(p);
     if (t.diplomatic>=60) return '偏外交';
@@ -1258,6 +1275,8 @@ var AI = (function () {
   }
   function reputationSummary(p) {
     const rep=(p&&p.prof&&p.prof.reputation===undefined)?50:((p&&p.prof&&p.prof.reputation)||50);
+    const inf=(p&&p.prof&&p.prof.raiderInfamy)||0;
+    if (persona(p)==='raider' || inf>=24) return '劫掠惡名';
     if (rep>=72) return '守約';
     if (rep>=48) return '普通';
     if (rep>=28) return '反覆';
@@ -1298,10 +1317,12 @@ var AI = (function () {
       return Math.max(1,130-d)+(r.hate+20)*0.25+(r.trust+30)*0.1;
     });
     if (!b) return;
-    const r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
-    if (t.diplomatic>=67 && r.hate<25 && U.rnd()<(t.diplomatic-55)/120) { if (giftAlliance(a,b,leader)) return; }
+    const r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power), infamy=raiderInfamyOfAlliance(b);
+    const willingToDeal = infamy < 18 || t.opportunistic + t.warlike > 145;
+    if (t.diplomatic>=67 && r.hate<25 && willingToDeal && U.rnd()<(t.diplomatic-55)/120) { if (giftAlliance(a,b,leader)) return; }
     if (!treatyActive(a.id,b.id) && a.enemy!==b.id && b.enemy!==a.id && r.hate<20) {
-      const pactScore=t.diplomatic*0.55+t.honorable*0.35+t.cautious*0.2-r.hate*0.5;
+      const distrustRaiders=infamy*Math.max(0,(t.honorable+t.diplomatic-t.opportunistic*0.5)/160);
+      const pactScore=t.diplomatic*0.55+t.honorable*0.35+t.cautious*0.2-r.hate*0.5-distrustRaiders;
       if (pactScore>78 && U.rnd()<0.55) {
         const dur=U.rint(480,960);
         if (userLed(b)) { if (createDiplomacyOffer(a,b,'nap',dur)) return; }
@@ -1322,8 +1343,9 @@ var AI = (function () {
     if (bid<0) return 0;
     const b=G().alliances[bid]; if(!b) return 0;
     if (treatyActive(a.id,bid)) return -10000;
-    const t=traits(leader), r=rel(a,bid), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
-    return r.hate*1.6-r.trust*0.8+t.warlike*0.3+t.aggressive*0.2+t.opportunistic*(pressure/100)*0.8
+    const t=traits(leader), r=rel(a,bid), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power), infamy=raiderInfamyOfAlliance(b);
+    const antiRaider=infamy*Math.max(0,(t.honorable+t.diplomatic*0.6-t.opportunistic*0.5)/150);
+    return r.hate*1.6-r.trust*0.8+t.warlike*0.3+t.aggressive*0.2+t.opportunistic*(pressure/100)*0.8+antiRaider
       -t.cautious*Math.max(0,1.15-ratio)*1.2-t.diplomatic*0.12;
   }
 
@@ -1331,7 +1353,7 @@ var AI = (function () {
   function inviteUser(a, leader) {
     const g = G();
     const u = Game.P[g.userId];
-    if (u.alliance >= 0 || !leader.ai || a.members.length >= CFG.ALLIANCE_MAX) return;
+    if (u.alliance >= 0 || !leader.ai || a.members.length >= CFG.ALLIANCE_MAX || persona(leader) === 'raider') return;
     if (!g.invites) g.invites = [];
     if (g.invites.some(x => x.a === a.id)) return;
     const d = Math.hypot(World.X(u.cityTile) - World.X(leader.cityTile), World.Y(u.cityTile) - World.Y(leader.cityTile));
@@ -1348,6 +1370,7 @@ var AI = (function () {
       if (now !== undefined && (now + a.id * 7) % 30 !== 0) continue; // 各同盟錯開思考，避免卡頓
       const leader = Game.P[a.leader];
       finalizeTraits(leader.prof);
+      if (leader.ai && persona(leader)==='raider') chooseRaiderVictim(a,leader);
       diplomacyThink(a, leader);
       inviteUser(a, leader);
       if (!leader.ai) recruitForUser(a);
@@ -1357,7 +1380,8 @@ var AI = (function () {
         if (city.alliance === a.id || sameBloc(city.alliance, a.id) || Game.cityLockedDay(city) > Game.day()) { a.target = -1; a.field = null; a.pave = null; }
       }
       if (a.target < 0 && leader.ai && a.members.length >= 3 && g.time >= (a.nextChoose || 0)) {
-        chooseTarget(a);
+        if (persona(leader)==='raider') chooseRaiderPassTarget(a,leader);
+        if (a.target < 0) chooseTarget(a);
         if (a.target < 0) a.nextChoose = g.time + 150; // 找不到目標時稍後再議
       }
       if (a.target >= 0) {
@@ -1652,6 +1676,7 @@ var AI = (function () {
   function onLandLost(p, attacker, tile) {
     p.grudge[attacker.id] = G().time;
     rememberHarm(p, attacker, 24, 'landLost');
+    recordRaiderIncident(p, attacker, 1);
     if (p.alliance >= 0 && attacker.alliance >= 0 && p.alliance !== attacker.alliance) {
       const a=G().alliances[p.alliance], b=G().alliances[attacker.alliance];
       if (a&&b) { const r=rel(a,b.id); r.hate=Math.min(100,r.hate+16); r.grudge=Math.min(100,r.grudge+14); r.trust=Math.max(-100,r.trust-12); r.lastInteraction=G().time; }
@@ -1665,6 +1690,7 @@ var AI = (function () {
   }
   function onCaptured(p, attacker) {
     p.grudge[attacker.id] = G().time;
+    recordRaiderIncident(p, attacker, 4);
     if (U.rnd() < 0.8) later(p, 'world', U.pick(CHAT.captured).replace('{n}', attacker.name), U.rint(1, 12));
   }
   function onBattleResult(p, team, tile, won) {
@@ -1738,12 +1764,133 @@ var AI = (function () {
     for (const f of feuds()) if (!f.over && (f.a === p.id || f.b === p.id)) return f.a === p.id ? f.b : f.a;
     return 0;
   }
+  function raiderVictimId(p) {
+    if (!p) return -1;
+    const a = p.alliance >= 0 ? G().alliances[p.alliance] : null;
+    if (a && a.raiderVictim !== undefined) return a.raiderVictim;
+    const m = mem(p);
+    return m.raiderVictim === undefined ? -1 : m.raiderVictim;
+  }
+  function raiderTargetValid(a, q) {
+    const g=G(), leader=a&&Game.P[a.leader];
+    if (!a || !leader || !q || q===leader || q.captor>=0 || g.time<q.protectEnd) return false;
+    if (q.alliance>=0 && sameBloc(a.id,q.alliance)) return false;
+    if (q.alliance>=0 && treatyActive(a.id,q.alliance)) return false;
+    if (isRaider(q)) return false;
+    const d=World.dist(leader.cityTile,q.cityTile);
+    if (d>62*MS()) return false;
+    const qb=q.alliance>=0?g.alliances[q.alliance]:null;
+    const own=Math.max(a.power||0,leader.power*3,1);
+    const other=qb&&!qb.dead?Math.max(qb.power||0,q.power*2,1):Math.max(q.power*3,bestTeamPower(q)*3,1);
+    return own>=other*1.18;
+  }
+  function chooseRaiderVictim(a, leader) {
+    if (!a || !leader || persona(leader)!=='raider') return null;
+    const g=G(), old=Game.P[a.raiderVictim];
+    if (g.time<(a.raiderVictimUntil||0) && raiderTargetValid(a,old)) return old;
+    let best=null, bs=-1e9;
+    const own=Math.max(a.power||0,leader.power*3,1);
+    for (const q of Game.P) {
+      if (!raiderTargetValid(a,q)) continue;
+      const qb=q.alliance>=0?g.alliances[q.alliance]:null;
+      const other=qb&&!qb.dead?Math.max(qb.power||0,q.power*2,1):Math.max(q.power*3,bestTeamPower(q)*3,1);
+      const ratio=own/Math.max(1,other), d=World.dist(leader.cityTile,q.cityTile);
+      const small=qb&&!qb.dead?Math.max(0,8-qb.members.length)*14:115;
+      const meek=q.ai&&q.prof?(q.prof.type==='newbie'?100:persona(q)==='turtle'?70:0):0;
+      const score=(ratio-1)*145+small+meek-d*2.2+U.rnd()*25;
+      if (score>bs) { bs=score; best=q; }
+    }
+    if (!best) { a.raiderVictim=-1; a.raiderVictimUntil=g.time+180; return null; }
+    a.raiderVictim=best.id; a.raiderVictimUntil=g.time+U.rint(720,1320); a.raiderHuntSince=g.time;
+    for (const id of a.members) {
+      const mbr=Game.P[id];
+      if (!mbr || !mbr.ai) continue;
+      mbr.grudge[best.id]=g.time;
+      const mm=mem(mbr); mm.conquest=best.id; mm.conquestUntil=g.time+720; mm.raiderVictim=best.id;
+    }
+    if (best.alliance>=0 && best.alliance!==a.id) {
+      const b=g.alliances[best.alliance];
+      if (b&&!b.dead&&!treatyActive(a.id,b.id)) declareWar(a,b,leader,'劫掠弱勢目標');
+    }
+    if (CHAT.raiderHunt) later(leader,'world',U.pick(CHAT.raiderHunt).replace('{n}',best.name).replace('{a}',a.name),U.rint(1,12));
+    return best;
+  }
+  function chooseRaiderPassTarget(a, leader) {
+    if (!a || !leader || persona(leader)!=='raider' || a.target>=0) return false;
+    const q=Game.P[a.raiderVictim];
+    if (!q || !raiderTargetValid(a,q)) return false;
+    // 已控制受害者出生州的關口時，轉回包圍/搶地，不反覆找另一個關。
+    if (a.cities.some(id=>{const c=World.cities[id];return c&&c.type==='pass'&&c.link&&c.link.includes(q.state);} )) return false;
+    let best=null, bs=-1e9;
+    for (const c of World.cities) {
+      if (!c || c.dead || c.type!=='pass' || !c.link || !c.link.includes(q.state)) continue;
+      if (c.alliance===a.id || sameBloc(c.alliance,a.id) || Game.cityLockedDay(c)>Game.day()) continue;
+      if (c.alliance>=0 && treatyActive(a.id,c.alliance)) continue;
+      if (!reachable(a,c)) continue;
+      const ctr=c.tiles[(c.tiles.length/2)|0], d=World.dist(ctr,q.cityTile);
+      const score=420-d*5+(c.alliance===q.alliance?180:0)+(c.alliance<0?70:0)+U.rnd()*20;
+      if (score>bs) {bs=score;best=c;}
+    }
+    if (!best) return false;
+    a.target=best.id; a.targetSince=G().time; a.phase='pave'; a.field=null; a.pave=null; a.raiderBlockPass=best.id;
+    if (best.alliance>=0 && best.alliance!==a.id) declareWar(a,G().alliances[best.alliance],leader,'封鎖關口');
+    if (CHAT.raiderBlock) Game.say(leader,'ally',U.pick(CHAT.raiderBlock).replace('{c}',best.name).replace('{n}',q.name));
+    return true;
+  }
+  function raiderThink(p) {
+    if (!isRaider(p)) return;
+    const g=G(), a=p.alliance>=0?g.alliances[p.alliance]:null;
+    let q=null;
+    if (a) {
+      const L=Game.P[a.leader];
+      if (L===p && persona(p)==='raider') q=chooseRaiderVictim(a,p);
+      else q=Game.P[a.raiderVictim];
+    }
+    if (!q || q.captor>=0 || g.time<q.protectEnd) return;
+    p.grudge[q.id]=g.time;
+    const m=mem(p);
+    m.raiderVictim=q.id;
+    if (m.conquest<0 || m.conquest===q.id || g.time>(m.conquestUntil||0)) {
+      m.conquest=q.id; m.conquestUntil=g.time+720;
+    }
+    if (p===Game.P[(a||{}).leader] && CHAT.raiderTaunt && U.rnd()<0.14*p.prof.chat) {
+      later(p,'world',U.pick(CHAT.raiderTaunt).replace('{n}',q.name).replace('{a}',a.name),U.rint(1,15));
+    }
+  }
+  function raiderDisplay(attacker) {
+    if (attacker && attacker.alliance>=0) {
+      const a=G().alliances[attacker.alliance], L=a&&Game.P[a.leader];
+      if (a&&L&&L.prof&&persona(L)==='raider') return '〔'+a.name+'〕';
+    }
+    return attacker?attacker.name:'未知勢力';
+  }
+  function recordRaiderIncident(victim, attacker, amount) {
+    if (!victim || !attacker || victim===attacker || !isRaider(attacker)) return;
+    const g=G(), a=attacker.alliance>=0?g.alliances[attacker.alliance]:null;
+    const key=a&&Game.P[a.leader]&&persona(Game.P[a.leader])==='raider'?'a'+a.id:'p'+attacker.id;
+    if (!victim.raiderAbuse) victim.raiderAbuse={};
+    const r=victim.raiderAbuse[key]||(victim.raiderAbuse[key]={score:0,last:-99999,reports:0});
+    r.score+=amount; r.last=g.time;
+    attacker.prof.raiderInfamy=(attacker.prof.raiderInfamy||0)+amount*2;
+    if (a) {
+      a.raiderInfamy=(a.raiderInfamy||0)+amount*2;
+      const L=Game.P[a.leader];
+      if (L&&L.prof) L.prof.raiderInfamy=Math.max(L.prof.raiderInfamy||0,a.raiderInfamy);
+    }
+    if (r.score<3 || g.time-(r.lastReport||-99999)<240) return;
+    r.lastReport=g.time; r.reports++;
+    const who=raiderDisplay(attacker);
+    if (victim.ai && CHAT.raiderExpose) later(victim,'world',U.pick(CHAT.raiderExpose).replace('{x}',who).replace('{n}',attacker.name),U.rint(1,8));
+    else if (!victim.ai) Game.notify(victim.id,who+' 已多次劫掠你的領地，其他勢力可能逐漸把他們視為「劫掠客」。','bad');
+  }
+
   function personaThink(p) {
     const k = persona(p), g = G();
     if (g.time < CFG.PROTECT_DAYS * 1440 * 0.5) return;
     if ((k === 'hothead' || k === 'warmonger') && !activeFeud(p) && U.rnd() < (k === 'warmonger' ? 0.5 : 0.25)) startFeud(p);
     if (k === 'traitor') tryBetray(p);
     if (k === 'overlord') subjugate(p);
+    if (isRaider(p)) raiderThink(p);
     if (k === 'turtle' && U.rnd() < 0.08 * p.prof.chat) later(p, 'world', U.pick(CHAT.turtle), U.rint(1, 20));
     if (k === 'warmonger' && U.rnd() < 0.12) later(p, 'world', U.pick(CHAT.warmonger), U.rint(1, 20));
   }
@@ -1980,12 +2127,12 @@ var AI = (function () {
   }
 
   return {
-    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp,
+    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp, isRaider, raiderInfamyOfAlliance,
     allianceMemory, treatyActive, makePact, breakPact, declareWar, diplomacyThink, diplomacyTargetBias, warIntentScore, backstabIntentScore,
     diplomacyOffersFor, respondDiplomacyOffer,
     sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
     onThreat, onPassThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
     get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable, allianceAction, pvpTarget,
-    _pending: pending, avoidTile, passPriority,
+    _pending: pending, avoidTile, passPriority, raiderVictimId, chooseRaiderVictim, chooseRaiderPassTarget, recordRaiderIncident,
   };
 })();
