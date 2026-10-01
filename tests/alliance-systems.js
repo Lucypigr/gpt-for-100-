@@ -62,10 +62,18 @@ for (const r of CFG.RES) victim.res[r] = rc[r] + 5000;
 ok(RateAllianceSystems.rebel(victim).ok, '反叛應成功');
 eq(victim.captor, -1, '反叛未解除淪陷');
 
+// 淪陷中可以退盟，但不會因此解除淪陷；之後不能直接再入盟。
+victim.captor = enemy.id; victim.capturedAt = Game.G.time;
+ok(Game.leaveAlliance(victim).ok, '淪陷中應可退出同盟');
+eq(victim.captor, enemy.id, '退盟不應解除淪陷');
+ok(!Game.joinAlliance(victim, a.id, true).ok, '淪陷中不可重新加入同盟');
+victim.alliance = a.id; if (!a.members.includes(victim.id)) a.members.push(victim.id);
+victim.captor = -1; victim.capturedAt = 0;
+
 // 流浪：保留80%四資源、放棄普通同盟、領地上限30；可建立義勇軍。
 victim.captor = enemy.id; victim.capturedAt = Game.G.time;
 for (const r of CFG.RES) victim.res[r] = 10000;
-victim.b.palace = Math.max(3, victim.b.palace);
+victim.b.palace = Math.max(6, victim.b.palace);
 victim.copper = 10000;
 const state = World.states.find(s => s.type === 'birth');
 ok(state, '找不到出生州');
