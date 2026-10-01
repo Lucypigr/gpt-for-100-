@@ -367,7 +367,7 @@ var Game = (function () {
     prod.copper = 200 + p.b.house * 250;
     p.prod = prod;
     p.cap = 30000 + p.b.warehouse * 22000 + p.b.palace * 4000;
-    p.landCap = CFG.landCap(p.fame);
+    p.landCap = p.wanderer ? 30 : CFG.landCap(p.fame);
     const c = World.cities[p.city];
     if (c) { const md = mainCityMaxDur(p); if (c.maxDur !== md) { c.dur = Math.min(md, c.dur + (md - c.maxDur)); c.maxDur = md; } }
   }
@@ -376,6 +376,7 @@ var Game = (function () {
 
   // ================= 建築 =================
   function upgradeBuilding(p, key) {
+    if (p.wanderer) return err('流浪軍軍砦保留原設施，但不能建設或升級城內設施');
     const bd = BUILDING_BY_KEY[key];
     if (!bd) return err('無此建築');
     if (p.bq.length >= 2) return err('建造隊列已滿');
@@ -1182,6 +1183,11 @@ var Game = (function () {
       if (city.dur <= 0) {
         city.dur = Math.round(city.maxDur * 0.5);
         city.garrison = null;
+        // 流浪軍攻破主城是掠奪，不會使對方淪陷；官方規則為掠走80%持有資源並給被掠奪方24小時保護。
+        if (p.wanderer && typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.wandererLootMain) {
+          const lr = RateAllianceSystems.wandererLootMain(o, p);
+          return lr && lr.cooldown ? '對方仍在流浪軍掠奪保護期' : '流浪軍掠奪主城成功！';
+        }
         // 未淪陷的原同盟盟友可攻破被俘主城進行解救。
         if (typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.canRescue && RateAllianceSystems.canRescue(p, o)) {
           RateAllianceSystems.releaseCaptive(o, 'rescue', p);
