@@ -71,3 +71,54 @@ const fog = found.fog; Game.G.time = fog.hazardStart; near(RateEarthSystems.adju
 const ice = found.freezing_rain; Game.G.time = ice.hazardStart; near(RateEarthSystems.adjustMorale(100, ice.center, false), 90, 1e-9, '冰凍士氣');
 
 console.log('Extreme weather OK: first-week guard + exact durations/delays + flood/snow/fog/ice effects');
+
+
+// 風向/風力與風災：官方公開效果為風力>=4、屯田/練兵/計略耗時+30%、行軍距離上限50。
+const winds = {};
+for (let d = 7; d < 500 && (!winds.sandstorm || !winds.windstorm); d++) {
+  for (let st = 0; st < World.states.length; st++) {
+    const ev = RateEarthSystems.windEventForState(d, st, Game.G.seed);
+    if (ev && !winds[ev.hazard]) winds[ev.hazard] = ev;
+  }
+}
+ok(winds.sandstorm && winds.windstorm, '應能產生沙塵暴與風災樣本');
+for (const k of ['sandstorm', 'windstorm']) {
+  const ev = winds[k];
+  ok(ev.wind.level >= 4, k + ' 風力應至少4級');
+  ok(['clear','cloudy','overcast'].includes(RateEarthSystems.weatherIdFor(ev.day, ev.stateId, Game.G.seed)), k + ' 天氣條件錯誤');
+  Game.G.time = ev.start;
+  near(RateEarthSystems.actionTimeFactor(ev.center, 'train'), 1.30, 1e-9, k + ' 練兵風阻');
+  near(RateEarthSystems.adjustMorale(100, ev.center, false), 80, 1e-9, k + ' 非建築領地士氣');
+  near(RateEarthSystems.adjustMorale(100, ev.center, true), 100, 1e-9, k + ' 建築內不套用鼓餒旗靡');
+}
+
+// 江河凝凍：冬季豪雪/凍雨災害中的非州界河流可通行、可佔領，解凍後自動失去河面領地。
+let frozen = null, freezeEv = null;
+outer:
+for (let d = 7; d < 500; d++) {
+  for (let st = 0; st < World.states.length; st++) {
+    const ev = RateEarthSystems.specialEventForState(d, st, Game.G.seed);
+    if (!ev || (ev.hazard !== 'snow' && ev.hazard !== 'ice')) continue;
+    Game.G.time = ev.hazardStart;
+    const cx = World.X(ev.center), cy = World.Y(ev.center);
+    for (let y = Math.max(0, cy - ev.radius); y <= Math.min(World.N - 1, cy + ev.radius); y++) {
+      for (let x = Math.max(0, cx - ev.radius); x <= Math.min(World.N - 1, cx + ev.radius); x++) {
+        const i = World.idx(x, y);
+        if (Game.T.terrain[i] === S.TERRAIN.WATER && RateEarthSystems.isFrozenRiver(i)) {
+          frozen = i; freezeEv = ev; break outer;
+        }
+      }
+    }
+  }
+}
+ok(frozen !== null, '找不到可凍結的非州界河流樣本');
+ok(World.isPassable(frozen), '凍結河流應可通行');
+Game.setOwner(frozen, p.id);
+ok(Game.tileOwner(frozen) === p.id, '凍結河流應可佔領');
+Game.G.time = freezeEv.hazardEnd + 1;
+Game.G.rateEnv = Game.G.rateEnv || {};
+Game.G.rateEnv.lastThawSweep = Game.G.time - 20;
+Game.advance(1);
+ok(Game.tileOwner(frozen) < 0, '解凍後河流領地應移除');
+
+console.log('Wind/frozen-river OK: level-4 hazards +30%/50-rule data + winter river occupation/thaw');
