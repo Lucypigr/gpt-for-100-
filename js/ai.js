@@ -76,7 +76,16 @@ var AI = (function () {
   const TRAIT_KEYS = ['aggressive','cautious','deceitful','diplomatic','warlike','vengeful','honorable','opportunistic','courageous','ambitious'];
   function clampTrait(v) { return Math.max(0, Math.min(100, Math.round(v))); }
   function finalizeTraits(pr) {
-    if (pr.traits) return pr;
+    if (pr.traits) {
+      // 舊存檔升級：前八項人格保持原值；新增「膽量／野心」以既有人格導出，
+      // 不重新抽亂數，確保存讀檔後人格不會改變。
+      const t = pr.traits;
+      if (t.courageous === undefined) t.courageous = clampTrait((t.aggressive || 0) * 0.42 + (100 - (t.cautious || 50)) * 0.33 + (t.warlike || 0) * 0.25);
+      if (t.ambitious === undefined) t.ambitious = clampTrait((t.aggressive || 0) * 0.25 + (t.opportunistic || 0) * 0.25 + (t.warlike || 0) * 0.18 + (pr.skill || 0.5) * 32);
+      for (const key of TRAIT_KEYS) t[key] = clampTrait(t[key] === undefined ? 50 : t[key]);
+      pr.reputation = pr.reputation === undefined ? 50 : pr.reputation;
+      return pr;
+    }
     const t = {
       aggressive: clampTrait(pr.aggr * 82 + U.rrange(0, 20)),
       cautious: clampTrait((1 - pr.aggr) * 65 + U.rrange(10, 38)),
