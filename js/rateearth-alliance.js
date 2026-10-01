@@ -230,7 +230,12 @@ var RateAllianceSystems = (function () {
     for (const i of p.lands.slice()) if (Game.T.owner[i] === p.id && Game.T.city[i] < 0) Game.setOwner(i, -1);
     for (const id of (p.forts || []).slice()) {
       const c = World.cities[id];
-      if (c && !c.dead) { if (c.tiles && c.tiles.length) Game.T.city[c.tiles[0]] = -1; c.dead = true; }
+      if (c && !c.dead) {
+        const ti = c.tiles && c.tiles.length ? c.tiles[0] : -1;
+        if (ti >= 0 && Game.T.owner[ti] === p.id) Game.setOwner(ti, -1);
+        if (ti >= 0) Game.T.city[ti] = -1;
+        c.dead = true;
+      }
     }
     for (const id of (p.branches || []).slice()) {
       const c = World.cities[id];
@@ -471,6 +476,16 @@ var RateAllianceSystems = (function () {
     for (const a0 of Game.G.alliances || []) {
       if (!a0 || a0.dead) continue;
       const a = ensureAlliance(a0);
+      // 戰鬥也會推進同盟等級；原作確認此路徑存在，但公開資料沒有完整經驗換算表。
+      if (!a._battleSeen) a._battleSeen = {};
+      let battleGain = 0;
+      for (const id of a.members) {
+        const q = Game.P[id]; if (!q) continue;
+        const cur = (q.stats && q.stats.battles) || 0, prev = a._battleSeen[id] || 0;
+        if (cur > prev) battleGain += (cur - prev) * 5; // 本作縮放：每場5經驗
+        a._battleSeen[id] = cur;
+      }
+      if (battleGain) addAllianceExp(a, battleGain);
       // 讓 AI 同盟也真的有副盟主/指揮官，不只玩家同盟介面有功能。
       const candidates = a.members.map(id => Game.P[id]).filter(q => q && q.id !== a.leader).sort((x,y)=>y.power-x.power);
       if (a.offices.deputy < 0 && candidates[0]) { clearOffice(a, candidates[0].id); a.offices.deputy = candidates[0].id; }
