@@ -361,7 +361,7 @@ var UI = (function () {
       return CFG.CITY_TYPE_NAME[city.type] + '・' + city.name + ' <small>Lv.' + city.lvl + '</small>';
     }
     if (T.terrain[i] === TERRAIN.MOUNTAIN) return '山脈';
-    if (T.terrain[i] === TERRAIN.WATER) return '河流';
+    if (T.terrain[i] === TERRAIN.WATER) return (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.isFrozenRiver && RateEarthSystems.isFrozenRiver(i)) ? '凍結河流' : '河流';
     return CFG.RES_NAME[CFG.RES[T.res[i]]] + ' <small>Lv.' + T.lvl[i] + '</small>';
   }
   function renderTilePop() {
@@ -371,10 +371,11 @@ var UI = (function () {
     const el = $('#tilepop');
     const c = T.city[i];
     const city = c >= 0 ? World.cities[c] : null;
+    const frozenRiver = T.terrain[i] === TERRAIN.WATER && typeof RateEarthSystems !== 'undefined' && RateEarthSystems.isFrozenRiver && RateEarthSystems.isFrozenRiver(i);
     let h = '<div class="tp-h"><div><div class="tp-t">' + tileTitle(i) + '</div><div class="tp-c">(' + World.X(i) + ',' + World.Y(i) + ') ' + World.states[T.state[i]].name + '</div></div><button class="x" data-act="closetile">✕</button></div>';
     h += '<div class="tp-b">';
     const owner = Game.tileOwner(i), alli = Game.tileAlliance(i);
-    if (T.terrain[i] === TERRAIN.MOUNTAIN || T.terrain[i] === TERRAIN.WATER) {
+    if (T.terrain[i] === TERRAIN.MOUNTAIN || (T.terrain[i] === TERRAIN.WATER && !frozenRiver)) {
       h += '<div class="muted">無法通行，也無法佔領。</div></div>';
       el.innerHTML = h; return;
     }
@@ -384,12 +385,17 @@ var UI = (function () {
     } else if (city && city.alliance >= 0) h += row('佔領同盟', '〔' + E(G.alliances[city.alliance].name) + '〕');
     else h += row('擁有者', '無主之地');
     if (!city) {
-      const L = T.lvl[i];
-      h += row('產量', CFG.RES_NAME[CFG.RES[T.res[i]]] + ' +' + CFG.LAND_OUTPUT[L] + '/時');
-      const g = CFG.GARRISON[L];
-      const st = G.landSiege[i];
-      h += row('守軍', g[0] + '隊 × ' + g[1] + '將 Lv' + g[2] + '，每將 ' + g[3] + ' 兵' + (st ? ' <span class="warn">(交戰中)</span>' : ''));
-      if (!user.firstCap[i]) h += row('首佔名望', '+' + L * CFG.FAME_PER_LVL);
+      if (frozenRiver) {
+        h += row('狀態', '<span class="good">江河凝凍：可通行、可佔領</span>');
+        h += row('產量', '0（僅作冬季戰略通路）');
+      } else {
+        const L = T.lvl[i];
+        h += row('產量', CFG.RES_NAME[CFG.RES[T.res[i]]] + ' +' + CFG.LAND_OUTPUT[L] + '/時');
+        const g = CFG.GARRISON[L];
+        const st = G.landSiege[i];
+        h += row('守軍', g[0] + '隊 × ' + g[1] + '將 Lv' + g[2] + '，每將 ' + g[3] + ' 兵' + (st ? ' <span class="warn">(交戰中)</span>' : ''));
+        if (!user.firstCap[i]) h += row('首佔名望', '+' + L * CFG.FAME_PER_LVL);
+      }
     } else if (city.type === 'main') {
       const o = Game.P[city.owner];
       h += row('耐久', Math.round(city.dur) + '/' + city.maxDur);
@@ -436,7 +442,7 @@ var UI = (function () {
       } else {
         h += '<button class="btn" data-act="tp-mode" data-m="garrison">駐守</button>';
         if (Game.baseValid(user, i) && i !== user.cityTile) h += '<button class="btn" data-act="tp-mode" data-m="move">調動</button>';
-        if (T.owner[i] === user.id && !city) {
+        if (T.owner[i] === user.id && !city && !frozenRiver) {
           h += '<button class="btn green" data-act="tp-mode" data-m="farm" title="收取此地 ' + CFG.FARM_HOURS + ' 小時產量，消耗 ' + CFG.COST_FARM + ' 體力">屯田</button>';
           h += '<button class="btn green" data-act="tp-mode" data-m="train" title="在此練兵 ' + CFG.TRAIN_MIN + ' 分鐘賺經驗，消耗 ' + CFG.COST_TRAIN + ' 體力">練兵</button>';
           h += '<button class="btn red" data-act="tp-mode" data-m="sweep" title="攻打此地守軍賺經驗，土地不會失去，消耗 ' + CFG.COST_SWEEP + ' 體力">掃蕩</button>';
@@ -446,6 +452,7 @@ var UI = (function () {
           h += '<button class="btn dark" data-act="tp-mode" data-m="confirm-branch">建分城</button>';
           h += '<button class="btn dark" data-act="tp-mode" data-m="confirm-relocate">遷城</button>';
         }
+        if (frozenRiver && T.owner[i] === user.id) h += '<br><button class="btn dark" data-act="abandon">放棄河面領地</button>';
       }
       if (city && !World.isPlayerCity(city) && user.alliance >= 0 && G.alliances[user.alliance].leader === user.id && city.alliance !== user.alliance)
         h += '<button class="btn gold" data-act="settarget" data-c="' + city.id + '">設為同盟目標</button>';
@@ -469,6 +476,7 @@ var UI = (function () {
     const c = T.city[i];
     if (c < 0) {
       if (T.owner[i] >= 0 && !sweep) return null;
+      if (T.terrain[i] === TERRAIN.WATER && typeof RateEarthSystems !== 'undefined' && RateEarthSystems.isFrozenRiver && RateEarthSystems.isFrozenRiver(i)) return 1;
       const L = T.lvl[i];
       return AI.winP(tp / (AI.GP[L] * AI.R50[L]));
     }
