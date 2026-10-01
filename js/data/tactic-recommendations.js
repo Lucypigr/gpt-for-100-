@@ -568,5 +568,7 @@ var TACTIC_RECOMMENDATIONS = (function () {
     return HEROES.filter(h => h.star >= 3 && h.star <= 5 && !forHero(h).length);
   }
 
-  return { forHero, allCovered, skillByName };
+  function isCurated(t) { return !!(t && S[t.name]); }
+
+  return { forHero, allCovered, skillByName, isCurated };
 })();
