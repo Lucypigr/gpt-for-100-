@@ -43,7 +43,7 @@ var AI = (function () {
         loyalty: U.rrange(0.3, 1),
         persona: 'normal',
       };
-    }).map(assignPersonaInit(n));
+    }).map(assignPersonaInit(n)).map(finalizeTraits);
   }
   // 個性（與技術類型無關）：梟雄、好戰者、叛徒、火爆鄰居、龜縮
   const PERSONA = {
@@ -72,6 +72,39 @@ var AI = (function () {
     if (k === 'hothead') { pr.aggr = Math.max(pr.aggr, 0.65); pr.chat = Math.max(pr.chat, 0.8); }
     if (k === 'turtle') { pr.aggr = 0.02; }
     return pr;
+  }
+  const TRAIT_KEYS = ['aggressive','cautious','deceitful','diplomatic','warlike','vengeful','honorable','opportunistic'];
+  function clampTrait(v) { return Math.max(0, Math.min(100, Math.round(v))); }
+  function finalizeTraits(pr) {
+    if (pr.traits) return pr;
+    const t = {
+      aggressive: clampTrait(pr.aggr * 82 + U.rrange(0, 20)),
+      cautious: clampTrait((1 - pr.aggr) * 65 + U.rrange(10, 38)),
+      deceitful: clampTrait(U.rrange(8, 82)),
+      diplomatic: clampTrait(U.rrange(12, 88)),
+      warlike: clampTrait(pr.aggr * 70 + U.rrange(5, 35)),
+      vengeful: clampTrait(U.rrange(12, 92)),
+      honorable: clampTrait(U.rrange(15, 95)),
+      opportunistic: clampTrait(U.rrange(12, 92)),
+    };
+    const k = pr.persona || 'normal';
+    if (k === 'overlord') { t.aggressive += 18; t.warlike += 12; t.diplomatic += 8; t.cautious -= 8; t.opportunistic += 12; }
+    if (k === 'warmonger') { t.aggressive += 24; t.warlike += 30; t.cautious -= 18; t.diplomatic -= 12; }
+    if (k === 'traitor') { t.deceitful += 30; t.opportunistic += 28; t.honorable -= 42; t.diplomatic += 8; }
+    if (k === 'hothead') { t.aggressive += 18; t.warlike += 14; t.vengeful += 20; t.cautious -= 14; }
+    if (k === 'turtle') { t.cautious += 32; t.aggressive -= 25; t.warlike -= 20; t.honorable += 10; }
+    for (const key of TRAIT_KEYS) t[key] = clampTrait(t[key]);
+    pr.traits = t;
+    pr.reputation = pr.reputation === undefined ? 50 : pr.reputation;
+    return pr;
+  }
+  function traits(p) { return finalizeTraits(p.prof).traits; }
+  function personalityTags(p) {
+    const t = traits(p), pairs = [
+      ['aggressive','激進'], ['cautious','保守'], ['deceitful','陰險'], ['diplomatic','重外交'],
+      ['warlike','好戰'], ['vengeful','記仇'], ['honorable','重信用'], ['opportunistic','投機'],
+    ];
+    return pairs.filter(x => t[x[0]] >= 68).sort((a,b)=>t[b[0]]-t[a[0]]).slice(0,3).map(x=>x[1]);
   }
   function persona(p) { return p.prof.persona || 'normal'; }
   // 同一陣營：同盟相同，或有從屬（附庸）關係
@@ -102,7 +135,27 @@ var AI = (function () {
 
   function mem(p) {
     if (!p.aiMem) p.aiMem = { nextHero: 0, nextTeam: 0, heroCount: -1, lastChat: -999, fortFor: -1, lastBuildThink: 0, conquest: -1 };
+    if (!p.aiMem.people) p.aiMem.people = {};
+    if (!p.aiMem.diplomacy) p.aiMem.diplomacy = {};
     return p.aiMem;
+  }
+  function personMemory(p, qid) {
+    const m = mem(p), k = String(qid);
+    if (!m.people[k]) m.people[k] = { trust: 0, hate: 0, harm: 0, help: 0, betrayals: 0, kept: 0, gifts: 0, last: -99999 };
+    return m.people[k];
+  }
+  function rememberHarm(p, q, amount, kind) {
+    if (!p || !q || p === q) return;
+    const r = personMemory(p, q.id), t = traits(p);
+    r.harm += amount; r.hate = Math.min(100, r.hate + amount * (0.55 + t.vengeful / 120));
+    r.trust = Math.max(-100, r.trust - amount * (0.45 + t.honorable / 180));
+    r.last = G().time; r.lastKind = kind || 'conflict';
+  }
+  function rememberHelp(p, q, amount, kind) {
+    if (!p || !q || p === q) return;
+    const r = personMemory(p, q.id);
+    r.help += amount; r.trust = Math.min(100, r.trust + amount); r.hate = Math.max(0, r.hate - amount * 0.4);
+    r.last = G().time; r.lastKind = kind || 'help';
   }
   // 記住最近的敗仗，避免反覆把同一支部隊送去撞同一塊地。
   // 放在玩家資料而非 aiMem，讓經驗可隨存檔延續；每人最多八筆。
@@ -152,7 +205,7 @@ var AI = (function () {
     m.joinAt = U.rint(joinDelay[0], joinDelay[1]);
     if (pr.type === 'newbie' && U.chance(0.25)) m.joinAt = 99999; // 有些新手不主動入盟
   }
-  function restore(p) { calib(); mem(p); }
+  function restore(p) { calib(); mem(p); if (p.prof) finalizeTraits(p.prof); }
   function interval(p) {
     const base = p.prof.act;
     return Math.max(1, Math.round(base * U.rrange(0.6, 1.4)));
@@ -990,6 +1043,150 @@ var AI = (function () {
     }
     if (best >= 0 && Game.attackBlock(p, best)) return -1;
     return best;
+  }
+
+  // ================= AI 外交人格與長期記憶 =================
+  function rel(a, bid) {
+    if (!a.diplomacy) a.diplomacy = {};
+    const k = String(bid);
+    if (!a.diplomacy[k]) a.diplomacy[k] = {
+      trust: 0, hate: 0, gifts: 0, wars: 0, betrayals: 0, kept: 0,
+      truceUntil: 0, napUntil: 0, pactCredited: 0, lastGift: -99999, lastWar: -99999, lastPeace: -99999,
+    };
+    return a.diplomacy[k];
+  }
+  function pactUntil(a, b) { const r = rel(a, b.id); return Math.max(r.truceUntil || 0, r.napUntil || 0); }
+  function treatyActive(aid, bid) {
+    if (aid < 0 || bid < 0 || aid === bid) return false;
+    const g = G(), a = g.alliances[aid], b = g.alliances[bid];
+    if (!a || !b || a.dead || b.dead) return false;
+    return Math.max(pactUntil(a,b), pactUntil(b,a)) > g.time;
+  }
+  function allianceMemory(a, b) { return rel(a, b.id); }
+  function clearTargetAgainst(a, bid) {
+    if (a.target >= 0) {
+      const c = World.cities[a.target];
+      if (c && c.alliance === bid) { a.target = -1; a.field = null; a.pave = null; a.phase = ''; a.rallyAt = 0; }
+    }
+    if (a.enemy === bid) a.enemy = -1;
+  }
+  function makePact(a, b, kind, minutes, initiator) {
+    const g = G(), until = g.time + minutes, ra = rel(a,b.id), rb = rel(b,a.id);
+    if (kind === 'truce') { ra.truceUntil = rb.truceUntil = until; } else { ra.napUntil = rb.napUntil = until; }
+    ra.lastPeace = rb.lastPeace = g.time; ra.pactCredited = rb.pactCredited = 0;
+    clearTargetAgainst(a,b.id); clearTargetAgainst(b,a.id);
+    ra.trust = Math.min(100, ra.trust + 6); rb.trust = Math.min(100, rb.trust + 6);
+    Game.sys('world', '【外交】〔' + a.name + '〕與〔' + b.name + '〕' + (kind === 'truce' ? '締結停戰' : '簽訂互不侵犯') + '，' + Math.round(minutes/60) + ' 小時內互不進攻。');
+    if (userLed(a)) Game.notify(a.leader, '〔' + b.name + '〕與我方' + (kind === 'truce' ? '停戰' : '簽訂互不侵犯') + '。', 'good');
+    if (userLed(b)) Game.notify(b.leader, '〔' + a.name + '〕與我方' + (kind === 'truce' ? '停戰' : '簽訂互不侵犯') + '。', 'good');
+    return until;
+  }
+  function breakPact(a, b, breaker) {
+    const ra = rel(a,b.id), rb = rel(b,a.id), active = treatyActive(a.id,b.id);
+    ra.truceUntil = ra.napUntil = 0; rb.truceUntil = rb.napUntil = 0;
+    if (!active) return;
+    ra.betrayals++; rb.betrayals++;
+    ra.trust = Math.max(-100, ra.trust - 45); rb.trust = Math.max(-100, rb.trust - 70);
+    ra.hate = Math.min(100, ra.hate + 15); rb.hate = Math.min(100, rb.hate + 38);
+    if (breaker && breaker.prof) breaker.prof.reputation = Math.max(0, (breaker.prof.reputation || 50) - 18);
+    Game.sys('world', '【背約】〔' + a.name + '〕撕毀與〔' + b.name + '〕的協議，突然開戰！');
+  }
+  function declareWar(a,b,leader,reason) {
+    if (!a || !b || a.dead || b.dead || a.id === b.id || sameBloc(a.id,b.id)) return false;
+    if (treatyActive(a.id,b.id)) breakPact(a,b,leader);
+    a.enemy = b.id;
+    const ra=rel(a,b.id), rb=rel(b,a.id);
+    ra.wars++; rb.wars++; ra.lastWar=rb.lastWar=G().time;
+    ra.hate=Math.min(100,ra.hate+12); rb.hate=Math.min(100,rb.hate+20);
+    if (leader && leader.ai) Game.say(leader,'world',U.pick(CHAT.declare).replace('{a}',b.name));
+    if (userLed(b)) Game.notify(b.leader,'〔'+a.name+'〕已對我方宣戰'+(reason?'：'+reason:'')+'！','bad');
+    return true;
+  }
+  function targetPressure(b) {
+    let pressure = 0;
+    if (b.enemy >= 0) pressure += 35;
+    if (b.phase === 'siege') pressure += 25;
+    const L=Game.P[b.leader];
+    if (L && L.lastLoss >= G().time-240) pressure += 20;
+    return Math.min(100,pressure);
+  }
+  function allianceDistance(a,b) {
+    const A=Game.P[a.leader], B=Game.P[b.leader];
+    return A&&B ? World.dist(A.cityTile,B.cityTile) : 9999;
+  }
+  function giftAlliance(a,b,leader) {
+    const ra=rel(a,b.id), rb=rel(b,a.id), g=G(), recv=Game.P[b.leader];
+    if (!recv || g.time-ra.lastGift < 720) return false;
+    let total=0;
+    for (const res of CFG.RES) {
+      const have=leader.res[res]||0, amt=Math.min(3500,Math.max(0,Math.floor(have*0.035)));
+      if (amt<300) continue;
+      leader.res[res]-=amt; recv.res[res]=Math.min(Math.max(recv.cap,recv.res[res]),recv.res[res]+amt); total+=amt;
+    }
+    if (!total) return false;
+    ra.lastGift=rb.lastGift=g.time; ra.gifts++; rb.gifts++;
+    ra.trust=Math.min(100,ra.trust+4); rb.trust=Math.min(100,rb.trust+14);
+    personMemory(recv,leader.id).gifts++; rememberHelp(recv,leader,10,'gift');
+    Game.sys('world','【外交】〔'+a.name+'〕向〔'+b.name+'〕送出援助物資。');
+    if (userLed(b)) Game.notify(b.leader,'〔'+a.name+'〕送來一批援助資源。','good');
+    return true;
+  }
+  function maintainPacts(a) {
+    const g=G();
+    for (const k in (a.diplomacy||{})) {
+      const r=a.diplomacy[k], b=g.alliances[+k];
+      if (!b || b.dead) continue;
+      const until=Math.max(r.truceUntil||0,r.napUntil||0);
+      if (until && g.time>=until && !r.pactCredited) {
+        r.pactCredited=1; r.kept++; r.trust=Math.min(100,r.trust+9);
+        const L=Game.P[a.leader]; if (L&&L.prof) L.prof.reputation=Math.min(100,(L.prof.reputation||50)+2);
+      }
+    }
+  }
+  function diplomacyThink(a, leader) {
+    const g=G(), t=traits(leader);
+    maintainPacts(a);
+    if (g.time < (a.nextDiplomacy||0)) return;
+    a.nextDiplomacy=g.time+U.rint(150,300);
+    const cands=g.alliances.filter(b=>!b.dead&&b.id!==a.id&&!sameBloc(a.id,b.id)&&allianceDistance(a,b)<=110*MS());
+    if (!cands.length) return;
+    if (a.enemy>=0) {
+      const b=g.alliances[a.enemy];
+      if (b&&!b.dead) {
+        const r=rel(a,b.id), losing=a.power < b.power*(0.78+t.cautious/350);
+        const peaceScore=t.diplomatic*0.45+t.cautious*0.35+r.trust*0.25-r.hate*0.35+(losing?35:0)-t.warlike*0.25;
+        if (peaceScore>52 && g.time-r.lastWar>180 && !userLed(b)) { makePact(a,b,'truce',U.rint(360,720),leader); return; }
+      }
+    }
+    const b=U.weighted(cands,x=>{
+      const d=allianceDistance(a,x), r=rel(a,x.id);
+      return Math.max(1,130-d)+(r.hate+20)*0.25+(r.trust+30)*0.1;
+    });
+    if (!b) return;
+    const r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
+    if (t.diplomatic>=67 && r.hate<25 && U.rnd()<(t.diplomatic-55)/120) { if (giftAlliance(a,b,leader)) return; }
+    if (!userLed(b) && !treatyActive(a.id,b.id) && a.enemy!==b.id && b.enemy!==a.id && r.hate<20) {
+      const pactScore=t.diplomatic*0.55+t.honorable*0.35+t.cautious*0.2-r.hate*0.5;
+      if (pactScore>78 && U.rnd()<0.55) { makePact(a,b,'nap',U.rint(480,960),leader); return; }
+    }
+    if (treatyActive(a.id,b.id) && pressure>=35) {
+      const backstab=t.deceitful*0.45+t.opportunistic*0.55+t.warlike*0.18-t.honorable*0.65-t.cautious*0.15+(ratio>1.05?18:0);
+      if (backstab>48 && U.rnd()<Math.min(0.65,(backstab-35)/70)) { declareWar(a,b,leader,'趁其主力外出'); return; }
+    }
+    if (!treatyActive(a.id,b.id) && a.enemy<0) {
+      const powerEdge=(ratio-1)*55;
+      const warScore=t.aggressive*0.30+t.warlike*0.36+t.opportunistic*0.16+r.hate*0.48+pressure*0.32+powerEdge
+        -t.cautious*0.28-t.diplomatic*0.14-r.trust*0.35;
+      if (warScore>42 && U.rnd()<Math.min(0.75,(warScore-25)/80)) declareWar(a,b,leader,pressure>=35?'趁敵另有戰事':'邊境衝突升高');
+    }
+  }
+  function diplomacyTargetBias(a,bid,leader) {
+    if (bid<0) return 0;
+    const b=G().alliances[bid]; if(!b) return 0;
+    if (treatyActive(a.id,bid)) return -10000;
+    const t=traits(leader), r=rel(a,bid), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
+    return r.hate*1.6-r.trust*0.8+t.warlike*0.3+t.aggressive*0.2+t.opportunistic*(pressure/100)*0.8
+      -t.cautious*Math.max(0,1.15-ratio)*1.2-t.diplomatic*0.12;
   }
 
   // ================= 同盟 AI（盟主決策）=================
