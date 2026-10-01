@@ -6,6 +6,20 @@ var main = { started: false };
 (function () {
   Render.init(document.getElementById('map'));
   UI.init();
+
+  // 面板（例如「創建同盟」）會每秒自動刷新一次。若刷新時使用者正在
+  // input / textarea / select 內輸入，refreshPanel() 會重建 DOM，造成欄位
+  // 失去焦點；手機上更會讓虛擬鍵盤反覆收起。輸入期間暫停 UI 的週期刷新，
+  // 遊戲世界與地圖仍照常運行，離開輸入欄位後下一幀立即恢復更新。
+  const uiUpdate = UI.update;
+  UI.update = function (now) {
+    const active = document.activeElement;
+    const editingModalField = active && active.closest && active.closest('#modal') &&
+      (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT');
+    if (editingModalField) return;
+    return uiUpdate(now);
+  };
+
   let last = performance.now();
   let lastSave = performance.now();
   let hiddenPaused = false;
