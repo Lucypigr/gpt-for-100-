@@ -186,7 +186,7 @@
       winner.warHoldPass = city.id;
       const L = Game.P[winner.leader];
       // 劫掠客拿到關口後會刻意長時間卡住交通，不只是一般戰術性留守。
-      winner.warHoldUntil = g.time + (L && L.prof && L.prof.persona === 'raider' ? 1440 : 360);
+      winner.warHoldUntil = g.time + (L && AI.raiderSelf && AI.raiderSelf(L) ? 1440 : 360);
       if (oldA >= 0 && hostile(aid, oldA)) winner.enemy = oldA;
     }
     if (city.type !== 'pass' || oldA < 0 || !hostile(oldA, aid)) return;
