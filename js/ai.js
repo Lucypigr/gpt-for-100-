@@ -86,18 +86,24 @@ var AI = (function () {
       pr.reputation = pr.reputation === undefined ? 50 : pr.reputation;
       return pr;
     }
+    // 人格需要有差異，但不能消耗遊戲的全局 RNG，否則只新增人格就會連帶改變
+    // 武將、地圖行動與既有回歸測試。用 profile 本身建立一個獨立且可重現的亂數流。
+    let traitSeed = 2166136261 >>> 0;
+    const traitKey = [pr.type, pr.skill, pr.act, pr.aggr, pr.daily, pr.gold, pr.chat, pr.loyalty, pr.persona].join('|');
+    for (let i = 0; i < traitKey.length; i++) { traitSeed ^= traitKey.charCodeAt(i); traitSeed = Math.imul(traitSeed, 16777619) >>> 0; }
+    const traitRng = U.makeRng(traitSeed || 1);
+    const trange = (a, b) => a + traitRng() * (b - a);
     const t = {
-      aggressive: clampTrait(pr.aggr * 82 + U.rrange(0, 20)),
-      cautious: clampTrait((1 - pr.aggr) * 65 + U.rrange(10, 38)),
-      deceitful: clampTrait(U.rrange(8, 82)),
-      diplomatic: clampTrait(U.rrange(12, 88)),
-      warlike: clampTrait(pr.aggr * 70 + U.rrange(5, 35)),
-      vengeful: clampTrait(U.rrange(12, 92)),
-      honorable: clampTrait(U.rrange(15, 95)),
-      opportunistic: clampTrait(U.rrange(12, 92)),
-      // 由既有 profile 導出，不額外消耗全局 RNG；這樣加入新人格維度不會改變既有地圖/配將/AI 行為序列。
-      courageous: clampTrait(pr.aggr * 55 + pr.skill * 30 + 8),
-      ambitious: clampTrait(pr.skill * 35 + pr.aggr * 35 + (1 - pr.loyalty) * 15 + 10),
+      aggressive: clampTrait(pr.aggr * 82 + trange(0, 20)),
+      cautious: clampTrait((1 - pr.aggr) * 65 + trange(10, 38)),
+      deceitful: clampTrait(trange(8, 82)),
+      diplomatic: clampTrait(trange(12, 88)),
+      warlike: clampTrait(pr.aggr * 70 + trange(5, 35)),
+      vengeful: clampTrait(trange(12, 92)),
+      honorable: clampTrait(trange(15, 95)),
+      opportunistic: clampTrait(trange(12, 92)),
+      courageous: clampTrait(pr.aggr * 55 + pr.skill * 30 + trange(3, 14)),
+      ambitious: clampTrait(pr.skill * 35 + pr.aggr * 35 + (1 - pr.loyalty) * 15 + trange(4, 16)),
     };
     const k = pr.persona || 'normal';
     if (k === 'overlord') { t.aggressive += 18; t.warlike += 12; t.diplomatic += 8; t.cautious -= 8; t.opportunistic += 12; t.courageous += 18; t.ambitious += 30; }
