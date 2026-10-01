@@ -20,6 +20,19 @@ var RateEarthSystems = (function () {
     mid_snow: { name: '中雪', icon: '🌨', march: 1.08, build: 1, desc: '行軍時間 +8%' },
     heavy_snow: { name: '大雪', icon: '❄', march: 1.10, build: 1, desc: '行軍時間 +10%' },
   };
+
+  // 特殊天氣公開規則：開服第一週不出現；暴雪/凍雨/暴雨持續3~6小時，
+  // 2小時後形成災害，天氣結束2小時後災害消失；霧持續2~3小時，
+  // 1小時後形成大霧，天氣結束1小時後大霧消失。
+  // 官方/攻略未公開「特殊天氣觸發機率」與「局部區域半徑」，因此本專案只讓
+  // 持續時間、延遲與效果跟公開規則一致；觸發排程與範圍採固定種子生成，不冒充官方機率。
+  const SPECIAL = {
+    blizzard: { name: '局部暴雪', icon: '🌨', hazard: 'snow', hazardName: '積雪', durMin: 180, durMax: 360, delay: 120, tail: 120 },
+    freezing_rain: { name: '局部凍雨', icon: '🧊', hazard: 'ice', hazardName: '冰凍', durMin: 180, durMax: 360, delay: 120, tail: 120 },
+    fog: { name: '局部霧', icon: '🌫', hazard: 'fog', hazardName: '大霧', durMin: 120, durMax: 180, delay: 60, tail: 60 },
+    storm: { name: '局部暴雨', icon: '⛈', hazard: 'flood', hazardName: '洪災', durMin: 180, durMax: 360, delay: 120, tail: 120 },
+  };
+  const HAZARD_MORALE = { fog: -10, ice: -10, snow: -10, flood: -20 };
   let installed = false;
   let lastHudKey = '';
   let scoutedTile = -1;
@@ -75,6 +88,109 @@ var RateEarthSystems = (function () {
     return Object.assign({ id }, WEATHER[id]);
   }
   function weatherNameAt(tile) { const w = weatherAt(tile); return w.icon + ' ' + w.name; }
+
+  function eventTypeFor(day, stateId, seed) {
+    if (day < 7) return null; // 開服/新賽季第一週不產生特殊天氣
+    const base = weatherIdFor(day, stateId, seed);
+    const roll = hash32(seed || 1, day + 3001, stateId + 97) % 100;
+    const s = seasonForDay(day).id;
+    if (base === 'heavy_snow' || base === 'mid_snow' || base === 'light_snow') return roll < 36 ? 'blizzard' : null;
+    if (base === 'heavy_rain' || base === 'mid_rain' || base === 'light_rain' || base === 'shower') return roll < 34 ? 'storm' : null;
+    // 低溫陰濕區域可能形成凍雨；本專案以冬季陰/多雲作為觸發條件。
+    if (s === 'winter' && (base === 'overcast' || base === 'cloudy')) return roll < 24 ? 'freezing_rain' : null;
+    if (base === 'overcast' || base === 'cloudy') return roll < 28 ? 'fog' : null;
+    return null;
+  }
+  function specialEventForState(day, stateId, seed) {
+    const type = eventTypeFor(day, stateId, seed);
+    if (!type) return null;
+    const def = SPECIAL[type];
+    const h1 = hash32(seed || 1, day + 7001, stateId + 211);
+    const h2 = hash32(seed || 1, day + 9001, stateId + 307);
+    const dur = def.durMin + (h1 % (def.durMax - def.durMin + 1));
+    // 事件在當日內開始；開始時刻並非官方公開數值，因此採種子固定排程。
+    const maxStart = Math.max(1, 1440 - dur);
+    const start = day * 1440 + (h2 % maxStart);
+    const end = start + dur;
+    const st = typeof World !== 'undefined' && World.states ? World.states[stateId] : null;
+    let center = -1;
+    if (st && st.cities && st.cities.length && World.cities) {
+      const cid = st.cities[h1 % st.cities.length];
+      const city = World.cities[cid];
+      if (city) center = World.idx(city.cx, city.cy);
+    }
+    if (center < 0 && st) center = World.idx(Math.round(st.sx), Math.round(st.sy));
+    const radius = 8 + (h2 % 6); // 局部範圍未公開，以固定8~13格模擬
+    return {
+      type, name: def.name, icon: def.icon, hazard: def.hazard, hazardName: def.hazardName,
+      day, stateId, start, end, hazardStart: start + def.delay, hazardEnd: end + def.tail,
+      center, radius, exactDuration: true,
+    };
+  }
+  function inEventArea(tile, ev) {
+    if (!ev || tile < 0 || ev.center < 0) return false;
+    return Game.T.state[tile] === ev.stateId && World.dist(tile, ev.center) <= ev.radius;
+  }
+  function specialAt(tile, atTime) {
+    if (typeof Game === 'undefined' || !Game.G || tile < 0) return null;
+    const t = atTime === undefined ? Game.G.time : atTime;
+    // 災害尾段可能跨到隔日，所以同時檢查今天與昨天事件。
+    const d = Math.floor(t / 1440), st = Game.T.state[tile] || 0, seed = Game.G.seed || 1;
+    for (const day of [d, d - 1]) {
+      const ev = specialEventForState(day, st, seed);
+      if (!ev || !inEventArea(tile, ev)) continue;
+      if (t >= ev.start && t < ev.hazardEnd) return ev;
+    }
+    return null;
+  }
+  function hazardAt(tile, atTime) {
+    const t = atTime === undefined ? (Game.G ? Game.G.time : 0) : atTime;
+    const ev = specialAt(tile, t);
+    if (!ev || t < ev.hazardStart || t >= ev.hazardEnd) return null;
+    return { id: ev.hazard, name: ev.hazardName, event: ev };
+  }
+  function specialPhaseAt(tile, atTime) {
+    const t = atTime === undefined ? (Game.G ? Game.G.time : 0) : atTime;
+    const ev = specialAt(tile, t);
+    if (!ev) return null;
+    const hz = hazardAt(tile, t);
+    return { event: ev, hazard: hz, weatherActive: t >= ev.start && t < ev.end };
+  }
+  function commandBlock(tile, type) {
+    const hz = hazardAt(tile);
+    if (!hz) return '';
+    if (hz.id === 'flood') return '洪災中，所有土地指令暫時無法使用';
+    if (hz.id === 'snow' && (type === 'farm' || type === 'train')) return '積雪冬歇中，無法屯田或練兵';
+    return '';
+  }
+  function moralePenalty(tile, isBuilding) {
+    const hz = hazardAt(tile);
+    if (!hz) return 0;
+    if ((hz.id === 'fog' || hz.id === 'ice' || hz.id === 'snow') && isBuilding) return 0;
+    return HAZARD_MORALE[hz.id] || 0;
+  }
+  function adjustMorale(base, tile, isBuilding) { return Math.max(0, (base === undefined ? 100 : base) + moralePenalty(tile, isBuilding)); }
+  function hidesMarchInFog(m, gx, gy, user) {
+    if (!m || !user || m.pid === user.id) return false;
+    const x = Math.round(gx), y = Math.round(gy);
+    if (!World.inb(x, y)) return false;
+    const tile = World.idx(x, y), hz = hazardAt(tile);
+    if (!hz || hz.id !== 'fog') return false;
+    // 大霧下建築僅保留中心視野：敵軍只有進入我方建築中心時才重新顯示。
+    const cid = Game.T.city[tile];
+    if (cid >= 0) {
+      const city = World.cities[cid];
+      if (city && city.owner === user.id && tile === World.idx(city.cx, city.cy)) return false;
+    }
+    return true;
+  }
+  function envLabelAt(tile) {
+    const w = weatherAt(tile), sp = specialPhaseAt(tile);
+    if (!sp) return w.icon + w.name;
+    if (sp.hazard) return sp.event.icon + sp.event.name + '／' + sp.hazard.name;
+    if (sp.weatherActive) return sp.event.icon + sp.event.name;
+    return w.icon + w.name;
+  }
   function marchFactor(tile) { return weatherAt(tile).march || 1; }
   function buildFactor(tile) { return weatherAt(tile).build || 1; }
 
@@ -101,6 +217,9 @@ var RateEarthSystems = (function () {
     if (typeof orig !== 'function') return;
     Game[fnName] = function () {
       const args = arguments;
+      const tile0 = tileOfResult(args, null);
+      const blocked = commandBlock(tile0, 'build');
+      if (blocked) return { ok: false, msg: blocked };
       const r = orig.apply(Game, args);
       if (!r || !r.ok) return r;
       const tile = tileOfResult(args, r);
@@ -141,6 +260,8 @@ var RateEarthSystems = (function () {
 
     const origSend = Game.send;
     Game.send = function (p, ti, target, type) {
+      const blocked = commandBlock(target, type);
+      if (blocked) return { ok: false, msg: blocked };
       const r = origSend(p, ti, target, type);
       if (r && r.ok) {
         applyMarchWeather(r.march);
@@ -160,6 +281,16 @@ var RateEarthSystems = (function () {
     patchBuild('buildFort', args => +args[1]);
     patchBuild('buildCamp', args => +args[1]);
     patchBuild('buildBranch', args => +args[1]);
+    const origAbandon = Game.abandon;
+    if (typeof origAbandon === 'function') Game.abandon = function (p, tile) {
+      const blocked = commandBlock(tile, 'abandon');
+      return blocked ? { ok: false, msg: blocked } : origAbandon(p, tile);
+    };
+    const origRelocate = Game.relocate;
+    if (typeof origRelocate === 'function') Game.relocate = function (p, tile) {
+      const blocked = commandBlock(tile, 'relocate');
+      return blocked ? { ok: false, msg: blocked } : origRelocate(p, tile);
+    };
 
     const origAdvance = Game.advance;
     Game.advance = function (minutes) {
@@ -233,7 +364,7 @@ var RateEarthSystems = (function () {
     const box = document.createElement('div');
     box.className = 'rate-scout-box';
     box.style.cssText = 'margin:8px 10px;padding:8px;background:rgba(239,226,194,.96);border:1px solid #8d6b33;max-height:240px;overflow:auto';
-    let html = '<div style="display:flex;justify-content:space-between;align-items:center"><b>斥候偵查</b><span class="muted">' + weatherNameAt(i) + '</span></div>';
+    let html = '<div style="display:flex;justify-content:space-between;align-items:center"><b>斥候偵查</b><span class="muted">' + envLabelAt(i) + '</span></div>';
     if (!data.groups.length) html += '<div class="muted" style="padding-top:6px">未發現可辨識的守軍。</div>';
     else data.groups.forEach(g => { html += '<div style="margin-top:7px"><b>' + esc(g.name) + '</b>' + g.units.map(heroLabel).join('') + '</div>'; });
     box.innerHTML = html;
@@ -259,10 +390,23 @@ var RateEarthSystems = (function () {
     if (!World.inb(x, y)) return;
     const i = World.idx(x, y);
     if (!pop.querySelector('.rate-weather-row')) {
-      const w = weatherAt(i), n = weatherAt(i, 1), s = season();
+      const w = weatherAt(i), n = weatherAt(i, 1), s = season(), sp = specialPhaseAt(i);
       const row = document.createElement('div');
       row.className = 'row rate-weather-row';
-      row.innerHTML = '<span>天時</span><span title="' + esc(w.desc) + '">' + s.icon + s.name + '季　' + w.icon + w.name + ' <small class="muted">明日 ' + n.icon + n.name + '</small></span>';
+      let nowText = w.icon + w.name;
+      let tip = w.desc;
+      if (sp) {
+        if (sp.hazard) {
+          const left = Math.max(0, sp.event.hazardEnd - Game.G.time);
+          nowText = sp.event.icon + sp.event.name + '／<b class="warn">' + sp.hazard.name + '</b> ' + U.fmtDur(left);
+          tip += '；災害：' + sp.hazard.name;
+        } else if (sp.weatherActive) {
+          const left = Math.max(0, sp.event.end - Game.G.time);
+          nowText = sp.event.icon + sp.event.name + ' ' + U.fmtDur(left);
+          tip += '；特殊天氣正在形成災害';
+        }
+      }
+      row.innerHTML = '<span>天時</span><span title="' + esc(tip) + '">' + s.icon + s.name + '季　' + nowText + ' <small class="muted">明日 ' + n.icon + n.name + '</small></span>';
       const body = pop.querySelector('.tp-b');
       if (body) body.appendChild(row);
     }
@@ -285,8 +429,8 @@ var RateEarthSystems = (function () {
     if (!clock) return;
     const u = Game.P[Game.G.userId];
     if (!u) return;
-    const w = weatherAt(u.cityTile), n = weatherAt(u.cityTile, 1), s = season();
-    const key = Game.day() + ':' + w.id + ':' + s.id;
+    const w = weatherAt(u.cityTile), n = weatherAt(u.cityTile, 1), s = season(), sp = specialPhaseAt(u.cityTile);
+    const key = Game.day() + ':' + w.id + ':' + s.id + ':' + (sp ? sp.event.type + ':' + (sp.hazard ? sp.hazard.id : 'forming') : 'none');
     let el = document.getElementById('rate-env');
     if (!el) {
       el = document.createElement('div'); el.id = 'rate-env';
@@ -295,8 +439,11 @@ var RateEarthSystems = (function () {
     }
     if (key !== lastHudKey) {
       lastHudKey = key;
-      el.innerHTML = '<b>' + s.icon + s.name + '季</b>　' + w.icon + w.name + ' <span style="opacity:.72">｜明日 ' + n.icon + n.name + '</span>';
-      el.title = s.desc + '；目前天氣：' + w.desc;
+      let cur = w.icon + w.name;
+      if (sp && sp.hazard) cur = sp.event.icon + sp.event.name + '／' + sp.hazard.name;
+      else if (sp && sp.weatherActive) cur = sp.event.icon + sp.event.name;
+      el.innerHTML = '<b>' + s.icon + s.name + '季</b>　' + cur + ' <span style="opacity:.72">｜明日 ' + n.icon + n.name + '</span>';
+      el.title = s.desc + '；目前天氣：' + w.desc + (sp ? '；' + sp.event.name + (sp.hazard ? '已形成' + sp.hazard.name : '正在持續') : '');
     }
   }
 
@@ -316,5 +463,5 @@ var RateEarthSystems = (function () {
   function init() { installGamePatches(); installDom(); }
   if (typeof window !== 'undefined') init();
 
-  return { SEASONS, WEATHER, seasonForDay, weatherIdFor, weatherAt, marchFactor, buildFactor, scoutData, installGamePatches };
+  return { SEASONS, WEATHER, SPECIAL, HAZARD_MORALE, seasonForDay, weatherIdFor, weatherAt, eventTypeFor, specialEventForState, specialAt, hazardAt, specialPhaseAt, commandBlock, moralePenalty, adjustMorale, hidesMarchInFog, envLabelAt, marchFactor, buildFactor, scoutData, installGamePatches };
 })();
