@@ -164,7 +164,7 @@ var AI = (function () {
     return pairs.filter(x => t[x[0]] >= 68).sort((a,b)=>t[b[0]]-t[a[0]]).slice(0,3).map(x=>x[1]);
   }
   function persona(p) { return p.prof.persona || 'normal'; }
-  function raiderSelf(p) { return !!(p&&p.prof&&(p.prof.archetype==='raider'||raiderSelf(p))); }
+  function raiderSelf(p) { return !!(p&&p.prof&&(p.prof.archetype==='raider'||persona(p)==='raider')); }
   function isRaider(p) {
     if (!p || !p.prof) return false;
     if (raiderSelf(p)) return true;
@@ -1765,7 +1765,7 @@ var AI = (function () {
     // 小盟盟主解散投靠大盟
     if (p.alliance >= 0) {
       const a = G().alliances[p.alliance];
-      if (a.leader === p.id && a.members.length < 3 && Game.day() >= 2 && a.cities.length === 0 && persona(p) !== 'raider') {
+      if (a.leader === p.id && a.members.length < 3 && Game.day() >= 2 && a.cities.length === 0 && !raiderSelf(p)) {
         p.prof.leader = false;
         delete mem(p).createAt;
         Game.leaveAlliance(p);
@@ -1820,7 +1820,7 @@ var AI = (function () {
     return own>=other*1.18;
   }
   function chooseRaiderVictim(a, leader) {
-    if (!a || !leader || persona(leader)!=='raider') return null;
+    if (!a || !leader || !raiderSelf(leader)) return null;
     const g=G(), old=Game.P[a.raiderVictim];
     if (g.time<(a.raiderVictimUntil||0) && raiderTargetValid(a,old)) return old;
     let best=null, bs=-1e9;
