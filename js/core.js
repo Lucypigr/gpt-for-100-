@@ -579,6 +579,8 @@ var Game = (function () {
       if (city.type === 'main') {
         const o = P[city.owner];
         if (G.time < o.protectEnd) return '對方主城處於保護期';
+        if (p.alliance < 0 && !p.wanderer && !(typeof RateAllianceSystems !== 'undefined' && RateAllianceSystems.canRescue && RateAllianceSystems.canRescue(p, o)))
+          return '需加入同盟才能使其他勢力淪陷';
         if (o.captor === p.id) return '已淪陷於你';
       }
       if (!World.isPlayerCity(city)) {
@@ -1303,7 +1305,7 @@ var Game = (function () {
     return ok();
   }
   function leaveAlliance(p) {
-    if (p.captor >= 0) return err('淪陷期間不能直接退出同盟');
+    // 淪陷中仍可退盟，但退盟本身不解除淪陷；create/join 會繼續受到淪陷限制。
     if (p.alliance < 0) return err('不在同盟中');
     const a = G.alliances[p.alliance];
     a.members = a.members.filter(x => x !== p.id);
