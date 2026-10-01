@@ -163,6 +163,19 @@ var RateAllianceSystems = (function () {
     if (!victim || !attacker) return;
     victim.capturedAt = Game.G.time;
     victim.captureEnd = 0; // 原作淪陷不是固定12小時自動結束
+    // 經典同盟規則：盟主主城被淪陷時，同盟其他未淪陷成員一併進入淪陷/附屬關係。
+    if (victim.alliance >= 0) {
+      const va = Game.G.alliances[victim.alliance];
+      if (va && va.leader === victim.id) {
+        for (const id of va.members) {
+          const q = Game.P[id];
+          if (!q || q.id === victim.id || q.captor >= 0) continue;
+          q.captor = attacker.id; q.captureEnd = 0; q.capturedAt = Game.G.time;
+          Game.recompute(q);
+          if (q.id === Game.G.userId) Game.notify(q.id, '盟主淪陷，你也隨同同盟進入淪陷狀態。', 'bad');
+        }
+      }
+    }
     // 隨機失去「部分領地」：公開規則沒有給出固定比例，本作以10%模擬。
     const lands = victim.lands.filter(i => Game.T.city[i] < 0);
     const lose = Math.min(lands.length, Math.max(0, Math.ceil(lands.length * LAND_LOSS_PCT)));
@@ -217,6 +230,7 @@ var RateAllianceSystems = (function () {
 
   function roam(p, stateId) {
     if (!p || p.captor < 0) return err('只有淪陷勢力可在此使用流浪重生');
+    if ((p.b.palace || 0) < 6) return err('轉為流浪軍需要君王殿／城主府 6 級');
     stateId = +stateId;
     const st = World.states[stateId];
     if (!st || st.type !== 'birth') return err('請選擇可出生州');
@@ -530,7 +544,7 @@ var RateAllianceSystems = (function () {
     };
     const origLeave = Game.leaveAlliance;
     Game.leaveAlliance = function (p) {
-      if (p && p.captor >= 0) return err('淪陷期間不能直接退出同盟；請反叛、被解救或流浪重生');
+      // 原作允許淪陷中退盟，但退盟不會解除淪陷，且淪陷中無法再建盟/入盟。
       return origLeave(p);
     };
 
