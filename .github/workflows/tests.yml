@@ -26,6 +26,8 @@ jobs:
         run: node tests/ai-strategy.js
       - name: AI personality test
         run: node tests/ai-personality.js
+      - name: Raider AI test
+        run: node tests/ai-raider.js
       - name: Tactic recommendations test
         run: node tests/tactic-recommendations.js
       - name: Warfare regression test
