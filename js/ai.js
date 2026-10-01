@@ -286,7 +286,16 @@ var AI = (function () {
     m.joinAt = U.rint(joinDelay[0], joinDelay[1]);
     if (pr.type === 'newbie' && U.chance(0.25)) m.joinAt = 99999; // 有些新手不主動入盟
   }
-  function restore(p) { calib(); mem(p); if (p.prof) finalizeTraits(p.prof); }
+  function migrateRaiderArchetypes() {
+    const g=G();
+    if (!g || g.raiderArchetypesReady) return;
+    const ais=Game.P.filter(q=>q&&q.ai&&q.prof);
+    // 新版存檔本來就有劫掠客；舊版存檔則在第一次讀取時以 deterministic 規則補上，
+    // 不消耗遊戲 RNG，也不改變既有地圖/武將/戰鬥隨機序列。
+    if (!ais.some(q=>q.prof.archetype==='raider')) assignRaiderArchetypes(ais.map(q=>q.prof),ais.length);
+    g.raiderArchetypesReady=1;
+  }
+  function restore(p) { calib(); mem(p); if (p.prof) finalizeTraits(p.prof); migrateRaiderArchetypes(); }
   function interval(p) {
     const base = p.prof.act;
     return Math.max(1, Math.round(base * U.rrange(0.6, 1.4)));
