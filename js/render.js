@@ -710,6 +710,22 @@ var Render = (function () {
     const rel = relOfPid(c.owner);
     const col = REL_COLOR[rel];
     const s = Math.max(5, cam.tw * 0.3);
+    if (c.rateAltar) {
+      // 祭壇：石台、四角柱與中央火盆，讓地圖上一眼能和要塞區分。
+      ctx.fillStyle = '#76654d';
+      ctx.beginPath(); ctx.ellipse(sx, sy - s * 0.05, s * 1.15, s * 0.52, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#3e3327'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = '#9a8768';
+      for (const dx of [-0.72, 0.72]) for (const dy of [-0.28, 0.28]) ctx.fillRect(sx + s * dx - 1.5, sy + s * dy - s * 0.9, 3, s * 0.9);
+      ctx.fillStyle = '#4b3b2b'; ctx.fillRect(sx - s * 0.28, sy - s * 0.62, s * 0.56, s * 0.24);
+      ctx.fillStyle = '#d97726'; ctx.beginPath(); ctx.arc(sx, sy - s * 0.72, s * 0.22, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#f5c45e'; ctx.beginPath(); ctx.arc(sx, sy - s * 0.8, s * 0.11, 0, Math.PI * 2); ctx.fill();
+      if (cam.tw >= 18) {
+        ctx.font = '10px "Noto Serif TC", serif'; ctx.fillStyle = '#ffe9b0'; ctx.textAlign = 'center';
+        ctx.fillText('祭壇', sx, sy + s * 0.95);
+      }
+      return;
+    }
     ctx.fillStyle = '#6e5a3c';
     ctx.fillRect(sx - s, sy - s * 1.1, s * 2, s * 1.1);
     ctx.fillStyle = '#9b8458';
