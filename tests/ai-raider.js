@@ -89,9 +89,12 @@ const obsA = Game.createAlliance(observer, '觀察盟').alliance;
 obsA.power = a.power = 100000;
 Object.assign(AI.traits(observer), { honorable:95, diplomatic:92, opportunistic:15, cautious:55, aggressive:40, warlike:35, courageous:45, ambitious:40 });
 const inf = a.raiderInfamy;
+const leaderInf = raider.prof.raiderInfamy || 0;
 a.raiderInfamy = 0;
+raider.prof.raiderInfamy = 0;
 const normalScore = AI.warIntentScore(obsA, a, observer);
 a.raiderInfamy = inf;
+raider.prof.raiderInfamy = leaderInf;
 const raiderScore = AI.warIntentScore(obsA, a, observer);
 assert.ok(raiderScore > normalScore, '重信用外交 AI 應因劫掠惡名提高警戒/敵意');
 
