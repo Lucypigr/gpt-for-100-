@@ -101,7 +101,8 @@ var CFG = {
   // 行軍：每格分鐘數
   minPerTile: function (spd) { return 240 / (Math.max(20, spd) + 60); },
   // 攻城值
-  siegeValue: function (troops, siege) { return troops * (1 + siege / 100) / 50; },
+  // 《率土之濱》攻城：部隊武將的攻城屬性相加，1 點攻城 = 1 點耐久傷害；兵力只決定武將是否仍能參與攻城。
+  siegeValue: function (troops, siege) { return troops > 0 ? Math.max(0, siege || 0) : 0; },
   // 統御
   BASE_COST_CAP: 8.0,
   // 卡包
