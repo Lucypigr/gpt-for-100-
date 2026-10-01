@@ -354,7 +354,7 @@ var UI = (function () {
     const c = T.city[i];
     if (c >= 0) {
       const city = World.cities[c];
-      if (city.type === 'main') return Game.P[city.owner].name + ' 的主城';
+      if (city.type === 'main') return Game.P[city.owner].name + (Game.P[city.owner].wanderer ? ' 的流浪軍砦' : ' 的主城');
       if (city.rateAltar) return '同盟祭壇';
       if (city.type === 'fort') return Game.P[city.owner].name + ' 的要塞';
       if (city.type === 'camp') return Game.P[city.owner].name + ' 的營帳';
@@ -972,7 +972,7 @@ var UI = (function () {
       const a = G.alliances[user.alliance];
       const tab = panelTab || 'info';
       const alv = typeof RateAllianceSystems !== 'undefined' ? RateAllianceSystems.ensureAlliance(a).level : 1;
-      let h = '<div class="alli-head"><div class="alli-flag" style="background:' + a.color + '">' + E(a.name.slice(0, 1)) + '</div><div><div class="alli-name">〔' + E(a.name) + '〕</div><div class="muted">Lv.' + alv + '　盟主 ' + E(Game.P[a.leader].name) + '　成員 ' + a.members.length + '/' + CFG.ALLIANCE_MAX + '　城池 ' + a.cities.length + '　積分 ' + Game.alliancePoints(a) + '　勢力 ' + U.fmt(a.power) + '</div><div class="muted">同盟總產量加成 +' + Math.round(Game.allianceBonus(user) * 100) + '%</div></div><div style="margin-left:auto"><button class="btn small dark" data-act="leave"' + (user.captor >= 0 ? ' disabled title="淪陷期間不能直接退盟"' : '') + '>退出同盟</button></div></div>';
+      let h = '<div class="alli-head"><div class="alli-flag" style="background:' + a.color + '">' + E(a.name.slice(0, 1)) + '</div><div><div class="alli-name">〔' + E(a.name) + '〕</div><div class="muted">Lv.' + alv + '　盟主 ' + E(Game.P[a.leader].name) + '　成員 ' + a.members.length + '/' + CFG.ALLIANCE_MAX + '　城池 ' + a.cities.length + '　積分 ' + Game.alliancePoints(a) + '　勢力 ' + U.fmt(a.power) + '</div><div class="muted">同盟總產量加成 +' + Math.round(Game.allianceBonus(user) * 100) + '%</div></div><div style="margin-left:auto"><button class="btn small dark" data-act="leave">退出同盟</button></div></div>';
       h += tabs([['info', '戰略'], ['members', '成員'], ['cities', '城池']], tab);
       if (tab === 'info') {
         if (a.target >= 0) {
