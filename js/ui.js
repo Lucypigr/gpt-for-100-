@@ -355,6 +355,7 @@ var UI = (function () {
     if (c >= 0) {
       const city = World.cities[c];
       if (city.type === 'main') return Game.P[city.owner].name + ' 的主城';
+      if (city.rateAltar) return '同盟祭壇';
       if (city.type === 'fort') return Game.P[city.owner].name + ' 的要塞';
       if (city.type === 'camp') return Game.P[city.owner].name + ' 的營帳';
       if (city.type === 'branch') return Game.P[city.owner].name + ' 的分城';
