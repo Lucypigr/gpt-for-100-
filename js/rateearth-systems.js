@@ -192,6 +192,8 @@ var RateEarthSystems = (function () {
   function specialAt(tile, atTime) {
     if (typeof Game === 'undefined' || !Game.G || tile < 0) return null;
     const t = atTime === undefined ? Game.G.time : atTime;
+    const prayer = prayerAt(tile, t);
+    if (prayer) return prayer;
     // 災害尾段可能跨到隔日，所以同時檢查今天與昨天事件。
     const d = Math.floor(t / 1440), st = Game.T.state[tile] || 0, seed = Game.G.seed || 1;
     for (const day of [d, d - 1]) {
@@ -257,6 +259,107 @@ var RateEarthSystems = (function () {
     }
     return true;
   }
+
+  function ensureEnvData() {
+    if (!Game.G.rateEnv) Game.G.rateEnv = { version: 2 };
+    if (!Game.G.rateEnv.prayers) Game.G.rateEnv.prayers = [];
+    if (!Game.G.rateEnv.version || Game.G.rateEnv.version < 2) Game.G.rateEnv.version = 2;
+    return Game.G.rateEnv;
+  }
+  function allianceOf(p) { return p && p.alliance >= 0 ? Game.G.alliances[p.alliance] : null; }
+  function activeAltar(a) {
+    if (!a || a.weatherAltar === undefined || a.weatherAltar < 0) return null;
+    const c = World.cities[a.weatherAltar];
+    if (!c || c.dead || !c.rateAltar || c.owner < 0) return null;
+    return c;
+  }
+  function isWeatherOfficer(p) {
+    const a = allianceOf(p);
+    return !!(a && a.weatherOfficer === p.id);
+  }
+  function appointWeatherOfficer(p, pid) {
+    const a = allianceOf(p);
+    if (!a) return { ok: false, msg: '需先加入同盟' };
+    if (a.leader !== p.id) return { ok: false, msg: '只有盟主可以任命太祝令' };
+    if (!a.members.includes(pid)) return { ok: false, msg: '只能任命本盟成員' };
+    a.weatherOfficer = pid;
+    Game.sysAlly(a.id, '【任命】' + Game.P[pid].name + ' 出任太祝令，掌管祭壇祈禳。');
+    return { ok: true };
+  }
+  function canBuildAltar(p, tile) {
+    const a = allianceOf(p);
+    if (!a) return '需先加入同盟';
+    if (!isWeatherOfficer(p)) return '只有太祝令可以建造祭壇';
+    if (activeAltar(a)) return '同盟已有祭壇';
+    if (tile < 0 || Game.T.owner[tile] !== p.id || Game.T.city[tile] >= 0) return '祭壇需建在太祝令自己的空地上';
+    if (!World.isPassable(tile)) return '此地無法建造祭壇';
+    return '';
+  }
+  function buildAltar(p, tile) {
+    const why = canBuildAltar(p, tile);
+    if (why) return { ok: false, msg: why };
+    // 公開資料只確認祭壇會消耗資源/建設值，但沒有找到足夠可靠且一致的具體成本數字。
+    // 因此本版先實作位置、權限、耐久與祈禳流程，不偽造成本/建造時間。
+    const c = World.placeFort(tile, p.id, 'fort');
+    c.name = '祭壇';
+    c.rateAltar = true;
+    c.alliance = p.alliance;
+    c.building = Game.G.time;
+    const a = allianceOf(p);
+    a.weatherAltar = c.id;
+    Game.G.overlayAll = true;
+    Game.sysAlly(a.id, '【祭壇】太祝令 ' + p.name + ' 於(' + World.X(tile) + ',' + World.Y(tile) + ')立壇，可行祈禳。');
+    return { ok: true, city: c };
+  }
+  function prayerAt(tile, atTime) {
+    if (typeof Game === 'undefined' || !Game.G || tile < 0) return null;
+    const env = ensureEnvData();
+    const t = atTime === undefined ? Game.G.time : atTime;
+    for (let k = env.prayers.length - 1; k >= 0; k--) {
+      const ev = env.prayers[k];
+      if (t < ev.start || t >= ev.end) continue;
+      if (Game.T.state[tile] !== ev.stateId) continue;
+      if (World.dist(tile, ev.center) <= ev.radius) return ev;
+    }
+    return null;
+  }
+  function canPrayWind(p, center) {
+    const a = allianceOf(p);
+    if (!a) return '需先加入同盟';
+    if (!isWeatherOfficer(p)) return '只有太祝令可以祈禳';
+    if (!activeAltar(a)) return '需先建造祭壇';
+    if (center < 0 || !World.inb(World.X(center), World.Y(center))) return '目標位置無效';
+    const w = weatherAt(center), wind = windAt(center);
+    if (!['clear', 'cloudy', 'overcast'].includes(w.id)) return '祭風只能在晴、陰、多雲天氣進行';
+    if (wind.level < 2) return '祭風需要風力 2 級或以上';
+    if (prayerAt(center)) return '此區域已有祈禳天象';
+    return '';
+  }
+  function prayWind(p, center) {
+    const why = canPrayWind(p, center);
+    if (why) return { ok: false, msg: why };
+    const env = ensureEnvData();
+    const a = allianceOf(p);
+    // 2021 調整後公開值：祭風指定範圍產生大風及風災效果，持續五小時。
+    // 祈禳「指定範圍」的格數未公開，本地圖以半徑 8 格承載；不宣稱為官方範圍值。
+    const ev = {
+      source: 'prayer', type: 'pray_wind', name: '祭風・大風', icon: '💨',
+      hazard: 'windstorm', hazardName: '風災',
+      alliance: a.id, officer: p.id, stateId: Game.T.state[center], center, radius: 8,
+      start: Game.G.time, end: Game.G.time + 300, hazardStart: Game.G.time, hazardEnd: Game.G.time + 300,
+      exactDuration: true,
+    };
+    env.prayers.push(ev);
+    Game.sysAlly(a.id, '【祈禳・祭風】太祝令 ' + p.name + ' 於(' + World.X(center) + ',' + World.Y(center) + ')祈風，風災持續 5 小時。');
+    return { ok: true, event: ev };
+  }
+  function garrisonCovers(gTile, target) {
+    if (gTile < 0 || target < 0) return false;
+    const hz = hazardAt(gTile) || hazardAt(target);
+    if (hz && (hz.id === 'sandstorm' || hz.id === 'windstorm')) return gTile === target;
+    return Math.abs(World.X(gTile) - World.X(target)) <= 1 && Math.abs(World.Y(gTile) - World.Y(target)) <= 1;
+  }
+
   function isStateBoundaryRiver(tile) {
     if (typeof Game === 'undefined' || !Game.T || Game.T.terrain[tile] !== TERRAIN.WATER) return false;
     const states = new Set();
@@ -340,13 +443,19 @@ var RateEarthSystems = (function () {
     const origNewGame = Game.newGame;
     Game.newGame = function (opts) {
       const g = origNewGame(opts);
-      g.rateEnv = g.rateEnv || { version: 1 };
+      g.rateEnv = g.rateEnv || { version: 2 };
+      if (!g.rateEnv.prayers) g.rateEnv.prayers = [];
+      g.rateEnv.version = 2;
       return g;
     };
     const origLoad = Game.load;
     if (typeof origLoad === 'function') Game.load = function () {
       const r = origLoad.apply(Game, arguments);
-      if (r && Game.G) Game.G.rateEnv = Game.G.rateEnv || { version: 1 };
+      if (r && Game.G) {
+        Game.G.rateEnv = Game.G.rateEnv || { version: 2 };
+        if (!Game.G.rateEnv.prayers) Game.G.rateEnv.prayers = [];
+        Game.G.rateEnv.version = 2;
+      }
       return r;
     };
 
@@ -530,6 +639,15 @@ var RateEarthSystems = (function () {
       if (body) body.appendChild(row);
     }
     const friendly = Game.isFriendly(Game.P[Game.G.userId], i);
+    const me = Game.P[Game.G.userId], myAlliance = allianceOf(me);
+    const acts = pop.querySelector('.acts');
+    if (acts && me && myAlliance && isWeatherOfficer(me) && !activeAltar(myAlliance) &&
+        Game.T.owner[i] === me.id && Game.T.city[i] < 0 && !pop.querySelector('[data-rate-altar]')) {
+      const b = document.createElement('button');
+      b.className = 'btn gold'; b.textContent = '建祭壇'; b.setAttribute('data-rate-altar', String(i));
+      b.title = '太祝令專用；公開資料未披露可靠的祭壇成本數值，本版暫不扣除資源';
+      acts.appendChild(b);
+    }
     if (scoutedTile === i) renderScoutBox(pop, i);
     if (!friendly && !pop.querySelector('[data-rate-scout]')) {
       const acts = pop.querySelector('.acts');
@@ -540,6 +658,50 @@ var RateEarthSystems = (function () {
         acts.insertBefore(b, acts.firstChild);
       }
     }
+  }
+
+
+  function toast(msg, type) {
+    if (typeof UI !== 'undefined' && UI.toast) UI.toast(msg, type || 'info');
+  }
+  function enhanceSeasonPanel() {
+    if (typeof document === 'undefined' || !Game.G || !Game.P || !Game.P.length) return;
+    const modal = document.getElementById('modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    const title = modal.querySelector('.win-title span');
+    if (!title || title.textContent.trim() !== '賽季') return;
+    const body = modal.querySelector('.win-body');
+    if (!body || body.querySelector('.rate-prayer-panel')) return;
+    const p = Game.P[Game.G.userId], a = allianceOf(p);
+    const sec = document.createElement('div');
+    sec.className = 'rate-prayer-panel';
+    sec.style.cssText = 'margin-top:12px;padding:10px;border:1px solid rgba(128,91,35,.45);background:rgba(239,226,194,.58)';
+    let h = '<div class="sec-t" style="margin-top:0">天時・祭壇祈禳</div>';
+    if (!a) {
+      h += '<div class="muted">加入同盟後，由盟主任命「太祝令」即可使用祭壇祈禳。</div>';
+    } else {
+      const officer = a.weatherOfficer === undefined ? -1 : a.weatherOfficer;
+      h += '<div class="row"><span>太祝令</span><span>' + (officer >= 0 && Game.P[officer] ? esc(Game.P[officer].name) : '尚未任命') + '</span></div>';
+      if (a.leader === p.id) {
+        h += '<div style="display:flex;gap:6px;align-items:center;margin:6px 0"><select data-rate-officer style="flex:1">' +
+          a.members.map(id => '<option value="' + id + '"' + (id === officer ? ' selected' : '') + '>' + esc(Game.P[id].name) + '</option>').join('') +
+          '</select><button class="btn small gold" data-rate-appoint>任命太祝令</button></div>';
+      }
+      const altar = activeAltar(a);
+      h += '<div class="row"><span>祭壇</span><span>' + (altar ? '(' + altar.cx + ',' + altar.cy + ')' : '尚未建造') + '</span></div>';
+      if (officer === p.id && !altar) h += '<div class="muted">請先在地圖點選自己的一塊空地，再按「建祭壇」。祭壇成本與建造時間的官方公開數值目前無可靠一致來源，因此本版先不偽造數字。</div>';
+      if (officer === p.id && altar) {
+        const def = p.cityTile;
+        h += '<div style="margin-top:8px"><b>祭風</b>　<span class="muted">條件：晴／陰／多雲，風力≥2級；風災持續5小時。</span></div>';
+        h += '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">目標座標 ' +
+          '<input data-rate-x type="number" min="0" max="' + (World.N - 1) + '" value="' + World.X(def) + '" style="width:68px">,' +
+          '<input data-rate-y type="number" min="0" max="' + (World.N - 1) + '" value="' + World.Y(def) + '" style="width:68px">' +
+          '<button class="btn small gold" data-rate-pray-wind>祭風</button></div>';
+        h += '<div class="muted" style="margin-top:4px">祭風的「5小時」與天氣/風力條件採公開原值；指定區域實際半徑未公開，本地圖暫以8格模擬。</div>';
+      }
+    }
+    sec.innerHTML = h;
+    body.appendChild(sec);
   }
 
   function updateHud() {
@@ -569,18 +731,51 @@ var RateEarthSystems = (function () {
   function installDom() {
     if (typeof document === 'undefined') return;
     document.addEventListener('click', e => {
-      const b = e.target.closest && e.target.closest('[data-rate-scout]');
-      if (!b) return;
-      e.preventDefault(); e.stopPropagation();
-      showScout(+b.getAttribute('data-rate-scout'));
+      const scout = e.target.closest && e.target.closest('[data-rate-scout]');
+      if (scout) {
+        e.preventDefault(); e.stopPropagation();
+        showScout(+scout.getAttribute('data-rate-scout'));
+        return;
+      }
+      const altarBtn = e.target.closest && e.target.closest('[data-rate-altar]');
+      if (altarBtn) {
+        e.preventDefault(); e.stopPropagation();
+        const r = buildAltar(Game.P[Game.G.userId], +altarBtn.getAttribute('data-rate-altar'));
+        toast(r.ok ? '祭壇已建立' : r.msg, r.ok ? 'good' : 'bad');
+        if (r.ok) document.getElementById('tilepop').classList.add('hidden');
+        return;
+      }
+      const appointBtn = e.target.closest && e.target.closest('[data-rate-appoint]');
+      if (appointBtn) {
+        e.preventDefault(); e.stopPropagation();
+        const sel = document.querySelector('[data-rate-officer]');
+        const r = appointWeatherOfficer(Game.P[Game.G.userId], sel ? +sel.value : -1);
+        toast(r.ok ? '太祝令任命完成' : r.msg, r.ok ? 'good' : 'bad');
+        const panel = document.querySelector('.rate-prayer-panel'); if (panel) panel.remove();
+        enhanceSeasonPanel();
+        return;
+      }
+      const prayBtn = e.target.closest && e.target.closest('[data-rate-pray-wind]');
+      if (prayBtn) {
+        e.preventDefault(); e.stopPropagation();
+        const xi = document.querySelector('[data-rate-x]'), yi = document.querySelector('[data-rate-y]');
+        const x = xi ? +xi.value : -1, y = yi ? +yi.value : -1;
+        const tile = World.inb(x, y) ? World.idx(x, y) : -1;
+        const r = prayWind(Game.P[Game.G.userId], tile);
+        toast(r.ok ? '祭風成功：目標區域進入5小時風災' : r.msg, r.ok ? 'good' : 'bad');
+        const panel = document.querySelector('.rate-prayer-panel'); if (panel) panel.remove();
+        enhanceSeasonPanel();
+      }
     }, true);
     const pop = document.getElementById('tilepop');
     if (pop && typeof MutationObserver !== 'undefined') new MutationObserver(() => enhanceTilePop(pop)).observe(pop, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-    setInterval(updateHud, 500);
+    const modal = document.getElementById('modal');
+    if (modal && typeof MutationObserver !== 'undefined') new MutationObserver(() => enhanceSeasonPanel()).observe(modal, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    setInterval(() => { updateHud(); enhanceSeasonPanel(); }, 500);
   }
 
   function init() { installGamePatches(); installDom(); }
   if (typeof window !== 'undefined') init();
 
-  return { SEASONS, WEATHER, SPECIAL, HAZARD_MORALE, WIND_DIRS, WIND_HAZARDS, seasonForDay, weatherIdFor, weatherAt, windFor, windAt, eventTypeFor, specialEventForState, windEventForState, specialAt, hazardAt, specialPhaseAt, commandBlock, windCommandBlock, actionTimeFactor, moralePenalty, adjustMorale, hidesMarchInFog, isStateBoundaryRiver, isFrozenRiver, envLabelAt, marchFactor, buildFactor, scoutData, installGamePatches };
+  return { SEASONS, WEATHER, SPECIAL, HAZARD_MORALE, WIND_DIRS, WIND_HAZARDS, seasonForDay, weatherIdFor, weatherAt, windFor, windAt, eventTypeFor, specialEventForState, windEventForState, specialAt, hazardAt, specialPhaseAt, commandBlock, windCommandBlock, actionTimeFactor, moralePenalty, adjustMorale, hidesMarchInFog, isStateBoundaryRiver, isFrozenRiver, envLabelAt, marchFactor, buildFactor, scoutData, ensureEnvData, activeAltar, isWeatherOfficer, appointWeatherOfficer, canBuildAltar, buildAltar, prayerAt, canPrayWind, prayWind, garrisonCovers, installGamePatches };
 })();
