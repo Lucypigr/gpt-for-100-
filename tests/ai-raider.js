@@ -4,7 +4,7 @@ const { load } = require('./load');
 const { Game, AI, World, TERRAIN, CFG } = load();
 
 const G = Game.newGame({ seed: 771234, userName: '劫掠測試', aiCount: 80 });
-const raiders = Game.P.filter(p => p.ai && p.prof.persona === 'raider');
+const raiders = Game.P.filter(p => p.ai && AI.raiderSelf(p));
 assert.ok(raiders.length >= 1, '80 AI 局至少應有一名劫掠客');
 assert.ok(raiders.length <= 3, '劫掠客必須是少數樣態');
 const raider = raiders[0];
@@ -17,7 +17,7 @@ assert.equal(created.ok, true, '劫掠客應能自立同盟');
 const a = created.alliance;
 
 // 拉一名普通 AI 入盟，驗證整個同盟會一起進入劫掠樣態。
-const helper = Game.P.find(p => p.ai && p !== raider && p.prof.persona !== 'raider' && p.alliance < 0);
+const helper = Game.P.find(p => p.ai && p !== raider && !AI.raiderSelf(p) && p.alliance < 0);
 assert.ok(helper, '缺少一般 AI 盟員');
 assert.equal(Game.joinAlliance(helper, a.id, true).ok, true);
 assert.equal(AI.isRaider(helper), true, '劫掠盟成員也應採用劫掠行為');
@@ -97,7 +97,7 @@ assert.ok(raiderScore > normalScore, '重信用外交 AI 應因劫掠惡名提�
 
 // 存讀檔後，劫掠身份、目標、惡名與受害紀錄都必須保留。
 const snap = {
-  persona: raider.prof.persona,
+  archetype: raider.prof.archetype,
   victim: a.raiderVictim,
   infamy: a.raiderInfamy,
   abuse: JSON.stringify(victim.raiderAbuse),
@@ -107,7 +107,7 @@ Game.deserialize(save);
 const raider2 = Game.P[raider.id];
 const a2 = Game.G.alliances[a.id];
 const victim2 = Game.P[victim.id];
-assert.equal(raider2.prof.persona, snap.persona, '存檔後劫掠身份改變');
+assert.equal(raider2.prof.archetype, snap.archetype, '存檔後劫掠身份改變');
 assert.equal(a2.raiderVictim, snap.victim, '存檔後劫掠目標遺失');
 assert.equal(a2.raiderInfamy, snap.infamy, '存檔後劫掠惡名遺失');
 assert.equal(JSON.stringify(victim2.raiderAbuse), snap.abuse, '存檔後受害紀錄遺失');
