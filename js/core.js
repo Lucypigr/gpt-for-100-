@@ -357,9 +357,9 @@ var Game = (function () {
     const bmap = ['lumber', 'ironw', 'quarry', 'farm'];
     const prod = {};
     CFG.RES.forEach((r, k) => {
-      // 流浪軍不取得領地資源產量；其資源主要依靠掠奪。
-      const land = p.wanderer ? 0 : p.landProd[k];
-      prod[r] = Math.round((base + p.b[bmap[k]] * 150 + land) * bonus);
+      // 官方流浪軍規則：不取得領地或城內設施的四資源產量，資源主要依靠掠奪。
+      if (p.wanderer) prod[r] = 0;
+      else prod[r] = Math.round((base + p.b[bmap[k]] * 150 + p.landProd[k]) * bonus);
     });
     let nb = 0;
     for (const id of (p.branches || [])) { const bc = World.cities[id]; if (!bc.dead && !(bc.building > G.time)) nb++; }
