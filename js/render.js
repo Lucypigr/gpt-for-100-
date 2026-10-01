@@ -768,6 +768,7 @@ var Render = (function () {
       }
       if (!showAIMarch && !mine && !threat && rel !== 'ally') continue;
       const [gx, gy] = Game.marchPos(m, t);
+      if (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.hidesMarchInFog && RateEarthSystems.hidesMarchInFog(m, gx, gy, u)) continue;
       const [cx, cy] = toScreen(gx + 0.5, gy + 0.5);
       const [ex, ey] = toScreen(World.X(m.to) + 0.5, World.Y(m.to) + 0.5);
       if (!onScreen(cx, cy, 30) && !onScreen(ex, ey, 30)) continue;
