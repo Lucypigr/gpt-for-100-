@@ -184,7 +184,9 @@
     const winner = g.alliances[aid];
     if (winner && city.type === 'pass') {
       winner.warHoldPass = city.id;
-      winner.warHoldUntil = g.time + 360;
+      const L = Game.P[winner.leader];
+      // 劫掠客拿到關口後會刻意長時間卡住交通，不只是一般戰術性留守。
+      winner.warHoldUntil = g.time + (L && L.prof && L.prof.persona === 'raider' ? 1440 : 360);
       if (oldA >= 0 && hostile(aid, oldA)) winner.enemy = oldA;
     }
     if (city.type !== 'pass' || oldA < 0 || !hostile(oldA, aid)) return;
