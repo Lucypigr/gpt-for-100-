@@ -1084,6 +1084,35 @@ var AI = (function () {
     if (userLed(b)) Game.notify(b.leader, '〔' + a.name + '〕與我方' + (kind === 'truce' ? '停戰' : '簽訂互不侵犯') + '。', 'good');
     return until;
   }
+  function offers() { const g=G(); if(!g.diplomacyOffers) g.diplomacyOffers=[]; return g.diplomacyOffers; }
+  function createDiplomacyOffer(from,to,kind,minutes) {
+    const g=G(), list=offers();
+    if (list.some(o=>!o.done&&o.from===from.id&&o.to===to.id&&g.time<o.expires)) return false;
+    const o={ id:(g.nextDiplomacyOffer=(g.nextDiplomacyOffer||1)+1), from:from.id, to:to.id, kind, minutes, at:g.time, expires:g.time+360, done:false };
+    list.push(o);
+    if (list.length>80) g.diplomacyOffers=list.filter(x=>!x.done&&x.expires>g.time-1440).slice(-60);
+    if (userLed(to)) Game.notify(to.leader,'〔'+from.name+'〕提出'+(kind==='truce'?'停戰':'互不侵犯')+'提案，請到「同盟」查看。','info');
+    return true;
+  }
+  function diplomacyOffersFor(aid) {
+    const g=G();
+    return offers().filter(o=>!o.done&&o.to===aid&&o.expires>g.time);
+  }
+  function respondDiplomacyOffer(aid, offerId, accept) {
+    const g=G(), o=offers().find(x=>x.id===+offerId&&!x.done&&x.to===aid&&x.expires>g.time);
+    if (!o) return {ok:false,msg:'提案已失效'};
+    const from=g.alliances[o.from], to=g.alliances[o.to];
+    if(!from||!to||from.dead||to.dead){o.done=true;return {ok:false,msg:'同盟已不存在'};}
+    o.done=true;
+    if(accept){
+      makePact(from,to,o.kind,o.minutes,Game.P[from.leader]);
+      rel(to,from.id).trust=Math.min(100,rel(to,from.id).trust+5);
+      return {ok:true};
+    }
+    rel(from,to.id).trust=Math.max(-100,rel(from,to.id).trust-3);
+    if(userLed(to)) Game.notify(to.leader,'你拒絕了〔'+from.name+'〕的外交提案。','info');
+    return {ok:true};
+  }
   function breakPact(a, b, breaker) {
     const ra = rel(a,b.id), rb = rel(b,a.id), active = treatyActive(a.id,b.id);
     ra.truceUntil = ra.napUntil = 0; rb.truceUntil = rb.napUntil = 0;
@@ -1158,7 +1187,11 @@ var AI = (function () {
       if (b&&!b.dead) {
         const r=rel(a,b.id), losing=a.power < b.power*(0.78+t.cautious/350);
         const peaceScore=t.diplomatic*0.45+t.cautious*0.35+r.trust*0.25-r.hate*0.35+(losing?35:0)-t.warlike*0.25;
-        if (peaceScore>52 && g.time-r.lastWar>180 && !userLed(b)) { makePact(a,b,'truce',U.rint(360,720),leader); return; }
+        if (peaceScore>52 && g.time-r.lastWar>180) {
+          const dur=U.rint(360,720);
+          if (userLed(b)) { if (createDiplomacyOffer(a,b,'truce',dur)) return; }
+          else { makePact(a,b,'truce',dur,leader); return; }
+        }
       }
     }
     const b=U.weighted(cands,x=>{
@@ -1168,9 +1201,13 @@ var AI = (function () {
     if (!b) return;
     const r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
     if (t.diplomatic>=67 && r.hate<25 && U.rnd()<(t.diplomatic-55)/120) { if (giftAlliance(a,b,leader)) return; }
-    if (!userLed(b) && !treatyActive(a.id,b.id) && a.enemy!==b.id && b.enemy!==a.id && r.hate<20) {
+    if (!treatyActive(a.id,b.id) && a.enemy!==b.id && b.enemy!==a.id && r.hate<20) {
       const pactScore=t.diplomatic*0.55+t.honorable*0.35+t.cautious*0.2-r.hate*0.5;
-      if (pactScore>78 && U.rnd()<0.55) { makePact(a,b,'nap',U.rint(480,960),leader); return; }
+      if (pactScore>78 && U.rnd()<0.55) {
+        const dur=U.rint(480,960);
+        if (userLed(b)) { if (createDiplomacyOffer(a,b,'nap',dur)) return; }
+        else { makePact(a,b,'nap',dur,leader); return; }
+      }
     }
     if (treatyActive(a.id,b.id) && pressure>=35) {
       const backstab=t.deceitful*0.45+t.opportunistic*0.55+t.warlike*0.18-t.honorable*0.65-t.cautious*0.15+(ratio>1.05?18:0);
@@ -1847,6 +1884,7 @@ var AI = (function () {
   return {
     makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, personMemory, rememberHarm, rememberHelp,
     allianceMemory, treatyActive, makePact, breakPact, declareWar, diplomacyThink, diplomacyTargetBias,
+    diplomacyOffersFor, respondDiplomacyOffer,
     sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
     onThreat, onPassThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
     get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable, allianceAction, pvpTarget,
