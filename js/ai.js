@@ -830,6 +830,7 @@ var AI = (function () {
       if (avoidLandAttack(p, i)) continue;
       const op = Game.P[o];
       if (op.alliance >= 0 && sameBloc(op.alliance, p.alliance)) continue;
+      if (p.alliance >= 0 && op.alliance >= 0 && treatyActive(p.alliance, op.alliance)) continue;
       if (p.captor >= 0 && (o === p.captor || (Game.P[p.captor].alliance >= 0 && op.alliance === Game.P[p.captor].alliance))) continue;
       const L = T.lvl[i];
       // 偵察實際駐守；無人駐守的土地，比貼近敵方主城的土地更適合突襲。
@@ -859,7 +860,8 @@ var AI = (function () {
       const m = mem(p);
       if (m.conquest >= 0) {
         const op = Game.P[m.conquest];
-        if (!op || op.captor >= 0 || (op.alliance >= 0 && op.alliance === p.alliance) || g.time > m.conquestUntil) m.conquest = -1;
+        if (!op || op.captor >= 0 || (op.alliance >= 0 && op.alliance === p.alliance) ||
+            (p.alliance >= 0 && op.alliance >= 0 && treatyActive(p.alliance, op.alliance)) || g.time > m.conquestUntil) m.conquest = -1;
         else {
           const ct = op.cityTile;
           if (!Game.attackBlock(p, ct)) return ct;
@@ -883,12 +885,13 @@ var AI = (function () {
           m.conquest = op.id; m.conquestUntil = g.time + 720;
           return Game.attackBlock(p, op.cityTile) ? -1 : op.cityTile;
         }
-      } else if (U.chance(persona(p) === 'warmonger' ? 0.6 : 0.25)) {
+      } else if (U.chance(Math.min(0.8, (persona(p) === 'warmonger' ? 0.45 : 0.08) + traits(p).warlike / 180 + traits(p).opportunistic / 420 - traits(p).cautious / 500))) {
         for (const i of cands) {
           const o = T.owner[i];
           if (o < 0) continue;
           const op = Game.P[o];
           if (op.alliance >= 0 && op.alliance === p.alliance) continue;
+          if (p.alliance >= 0 && op.alliance >= 0 && treatyActive(p.alliance, op.alliance)) continue;
           if (World.dist(i, op.cityTile) > 12 || g.time < op.protectEnd || op.captor >= 0) continue;
           const hostile = o in p.grudge || (op.alliance >= 0 && isEnemyAlliance(p, op.alliance));
           const bold = persona(p) === 'warmonger' ? 1.3 : 1;
@@ -1209,6 +1212,8 @@ var AI = (function () {
       if (a.dead) continue;
       if (now !== undefined && (now + a.id * 7) % 30 !== 0) continue; // 各同盟錯開思考，避免卡頓
       const leader = Game.P[a.leader];
+      finalizeTraits(leader.prof);
+      diplomacyThink(a, leader);
       inviteUser(a, leader);
       if (!leader.ai) recruitForUser(a);
       // 使用者當盟主時，由使用者設定目標；AI 僅協助計算鋪路
@@ -1295,6 +1300,7 @@ var AI = (function () {
     for (const c of World.cities) {
       if (World.isPlayerCity(c) || c.dead) continue;
       if (c.alliance === a.id || sameBloc(c.alliance, a.id)) continue;
+      if (c.alliance >= 0 && treatyActive(a.id, c.alliance)) continue;
       if (Game.cityLockedDay(c) > Game.day()) continue;
       const d = Math.hypot(c.cx - sx, c.cy - sy);
       // 一般城池只看附近；洛陽與司隸城池在大地圖上距離按比例放大，否則沒有同盟會去打
@@ -1303,17 +1309,15 @@ var AI = (function () {
       const need = c.alliance < 0 ? CP[c.lvl] * garr[0] * 0.9 : (Game.G.alliances[c.alliance].power / 60);
       if (str < need * (0.55 + leader.prof.skill * 0.3)) continue;
       const pts = (CFG.CITY_POINTS[c.type] || 5) + (c.type === 'pass' ? 25 : 0) + (c.type === 'luoyang' ? 1000 : 0);
-      cands.push({ c, score: pts * 3 + passPriority(a, c) - d * 1.2 - (c.alliance >= 0 ? 30 : 0) + U.rnd() * 15 });
+      cands.push({ c, score: pts * 3 + passPriority(a, c) - d * 1.2 - (c.alliance >= 0 ? 30 : 0) +
+        (c.alliance >= 0 ? diplomacyTargetBias(a, c.alliance, leader) : 0) + U.rnd() * 15 });
     }
     cands.sort((x, y) => y.score - x.score);
     for (const { c } of cands.slice(0, 6)) {
       if (!reachable(a, c)) continue;
       a.target = c.id; a.targetSince = g.time; a.phase = 'pave'; a.field = null;
       Game.say(leader, 'ally', U.pick(CHAT.targetSet).replace('{c}', CFG.CITY_TYPE_NAME[c.type] + '【' + c.name + '】').replace('{xy}', '(' + c.cx + ',' + c.cy + ')'));
-      if (c.alliance >= 0) {
-        a.enemy = c.alliance;
-        Game.say(leader, 'world', U.pick(CHAT.declare).replace('{a}', Game.G.alliances[c.alliance].name));
-      }
+      if (c.alliance >= 0) declareWar(a, Game.G.alliances[c.alliance], leader, '爭奪城池');
       return;
     }
   }
@@ -1504,9 +1508,19 @@ var AI = (function () {
   }
   function onAttacked(p, attacker, tile, winner) {
     p.grudge[attacker.id] = G().time;
+    rememberHarm(p, attacker, winner === 'atk' ? 16 : 9, 'attacked');
+    if (p.alliance >= 0 && attacker.alliance >= 0 && p.alliance !== attacker.alliance) {
+      const a=G().alliances[p.alliance], b=G().alliances[attacker.alliance];
+      if (a&&b) { const r=rel(a,b.id); r.hate=Math.min(100,r.hate+10); r.trust=Math.max(-100,r.trust-8); }
+    }
   }
   function onLandLost(p, attacker, tile) {
     p.grudge[attacker.id] = G().time;
+    rememberHarm(p, attacker, 24, 'landLost');
+    if (p.alliance >= 0 && attacker.alliance >= 0 && p.alliance !== attacker.alliance) {
+      const a=G().alliances[p.alliance], b=G().alliances[attacker.alliance];
+      if (a&&b) { const r=rel(a,b.id); r.hate=Math.min(100,r.hate+16); r.trust=Math.max(-100,r.trust-12); }
+    }
     const m = mem(p);
     if (G().time - m.lastChat > 60 && U.rnd() < p.prof.chat * 0.5) {
       m.lastChat = G().time;
@@ -1682,9 +1696,13 @@ var AI = (function () {
     if (!Game.joinAlliance(p, to.id, true).ok) return;
     m.betrayed = true;
     p.title = '叛徒';
+    p.prof.reputation = Math.max(0, (p.prof.reputation || 50) - 35);
     Game.say(p, 'world', U.pick(CHAT.betray).replace('{a}', oldA.name).replace('{b}', to.name));
     Game.sys('world', '【倒戈】' + p.name + ' 叛出〔' + oldA.name + '〕，投靠〔' + to.name + '〕！');
-    for (const id of oldMembers) { const q = Game.P[id]; if (q && q.ai) q.grudge[p.id] = g.time; }
+    for (const id of oldMembers) {
+      const q = Game.P[id];
+      if (q && q.ai) { q.grudge[p.id] = g.time; rememberHarm(q,p,45,'betrayal'); personMemory(q,p.id).betrayals++; }
+    }
     const who = Game.P[U.pick(oldMembers)];
     if (who && who.ai) later(who, 'ally', U.pick(CHAT.betrayed).replace('{n}', p.name), U.rint(1, 6));
     const L = Game.P[oldA.leader];
@@ -1827,7 +1845,9 @@ var AI = (function () {
   }
 
   return {
-    makeProfiles, init, restore, PERSONA, sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
+    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, personMemory, rememberHarm, rememberHelp,
+    allianceMemory, treatyActive, makePact, breakPact, declareWar, diplomacyThink, diplomacyTargetBias,
+    sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
     onThreat, onPassThreat, onAttacked, onLandLost, onCaptured, onBattleResult, onCityCaptured, onJoin, onUserChat,
     get GP() { calib(); return GP; }, get CP() { calib(); return CP; }, R50, CR50, TYPES, winP, buildField, updatePave, cityAdjacent, reachable, allianceAction, pvpTarget,
     _pending: pending, avoidTile, passPriority,
