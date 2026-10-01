@@ -5,7 +5,7 @@
 var RateAllianceSystems = (function () {
   const ROLE_NAME = { leader: '盟主', deputy: '副盟主', commander: '指揮官', officer: '官員', member: '盟員' };
   const MAX_COMMANDERS = 2;          // 公開版本：指揮官最多 2 名
-  const MILITIA_MAX = 5;             // 初版義勇軍公開規則：最多 5 勢力
+  const MILITIA_MAX = 50;            // 2019 官方更新後：義勇軍上限 50 勢力
   const ROAM_KEEP = 0.80;            // 流浪軍保留原有資源 80%
   const LAND_LOSS_PCT = 0.10;        // 原作僅公開「隨機丟失部分領地」；本作採 10% 模擬，非官方比例
   const CAPTURE_LOOT_PCT = 0.10;     // 原作僅公開「掠奪部分倉庫資源」；本作採 10% 模擬，非官方比例
@@ -262,6 +262,22 @@ var RateAllianceSystems = (function () {
     return ok({ center });
   }
 
+  function wandererLootMain(victim, attacker) {
+    if (!victim || !attacker || !attacker.wanderer) return err('不是流浪軍掠奪');
+    if ((victim.plunderedUntil || 0) > Game.G.time) return ok({ cooldown: true, loot: {} });
+    const loot = {};
+    // 官方流浪軍規則：主城耐久歸零時可取得對方持有資源80%，被掠奪方倉庫四資源歸零；24小時內不再被流浪軍重複掠奪。
+    for (const r of CFG.RES) {
+      loot[r] = Math.floor((victim.res[r] || 0) * 0.80);
+      victim.res[r] = 0;
+      attacker.res[r] = Math.min(Math.max(attacker.cap, attacker.res[r]), attacker.res[r] + loot[r]);
+    }
+    victim.plunderedUntil = Game.G.time + 1440;
+    if (victim.id === Game.G.userId) Game.notify(victim.id, '主城遭流浪軍掠奪，進入24小時掠奪保護。', 'bad');
+    Game.sys('world', '【掠奪】流浪軍 ' + attacker.name + ' 攻破 ' + victim.name + ' 主城並掠走資源。');
+    return ok({ loot });
+  }
+
   function activeMilitia(id) {
     ensureGlobal();
     const m = Game.G.militias[id];
@@ -271,10 +287,13 @@ var RateAllianceSystems = (function () {
     ensureGlobal();
     if (!p || !p.wanderer) return err('只有流浪軍可以建立義勇軍');
     if (p.militia >= 0) return err('已加入義勇軍');
+    if ((p.b.palace || 0) < 3) return err('建立義勇軍需要城主府／君王殿 3 級');
+    if ((p.copper || 0) < 5000) return err('建立義勇軍需要 5000 銅幣');
     name = String(name || '').trim();
     if (!name || name.length > 8) return err('義勇軍名稱需 1~8 字');
     if (Game.G.militias.some(m => m && !m.dead && m.name === name)) return err('名稱已被使用');
-    const m = { id: Game.G.militias.length, name, leader: p.id, members: [p.id], state: p.state, dead: false, created: Game.G.time };
+    p.copper -= 5000;
+    const m = { id: Game.G.militias.length, name, leader: p.id, members: [p.id], state: p.state, dead: false, created: Game.G.time, offices: { deputy: -1, commanders: [] } };
     Game.G.militias.push(m); p.militia = m.id;
     Game.sys('world', '【義勇軍】流浪軍 ' + p.name + ' 建立義勇軍〔' + name + '〕。');
     return ok({ militia: m });
@@ -285,8 +304,7 @@ var RateAllianceSystems = (function () {
     if (p.militia >= 0) return err('已加入義勇軍');
     if (!m) return err('義勇軍不存在');
     if (m.members.length >= MILITIA_MAX) return err('義勇軍人數已滿（' + MILITIA_MAX + '）');
-    // 初版公開規則限定同州，採此經典規則；後續版本曾放寬跨州。
-    if (m.state !== p.state) return err('經典義勇軍規則只接受同州流浪軍');
+    // 2019 官方更新後已允許不同州的流浪軍加入同一義勇軍。
     m.members.push(p.id); p.militia = m.id;
     return ok();
   }
@@ -302,7 +320,7 @@ var RateAllianceSystems = (function () {
 
   function militiaPanel(p) {
     ensureGlobal();
-    let h = '<div class="sec-t">流浪軍・義勇軍</div><div class="muted">流浪軍不享有普通同盟等級加成；同州流浪軍可組成義勇軍，共享視野與領地連地。經典規則上限 ' + MILITIA_MAX + ' 勢力。</div>';
+    let h = '<div class="sec-t">流浪軍・義勇軍</div><div class="muted">流浪軍不享有普通同盟等級加成；義勇軍可共享視野與領地連地。2019 官方更新後上限 ' + MILITIA_MAX + ' 勢力、可跨州加入；建立需君王殿3級與5000銅幣。</div>';
     if (p.militia >= 0) {
       const m = activeMilitia(p.militia);
       if (!m) { p.militia = -1; return militiaPanel(p); }
@@ -311,7 +329,7 @@ var RateAllianceSystems = (function () {
         '<br><button class="btn small dark" data-rate-militia-leave>退出義勇軍</button></div>';
     } else {
       h += '<div style="display:flex;gap:6px;margin:8px 0"><input data-rate-militia-name maxlength="8" placeholder="義勇軍名稱"><button class="btn small gold" data-rate-militia-create>建立</button></div>';
-      const list = Game.G.militias.filter(m => m && !m.dead && m.state === p.state);
+      const list = Game.G.militias.filter(m => m && !m.dead);
       h += '<table class="tbl"><tr><th>義勇軍</th><th>首領</th><th>人數</th><th></th></tr>' +
         list.map(m => '<tr><td>〔' + esc(m.name) + '〕</td><td>' + esc(Game.P[m.leader].name) + '</td><td>' + m.members.length + '/' + MILITIA_MAX + '</td><td><button class="btn small" data-rate-militia-join="' + m.id + '"' + (m.members.length >= MILITIA_MAX ? ' disabled' : '') + '>加入</button></td></tr>').join('') +
         '</table>';
@@ -521,7 +539,7 @@ var RateAllianceSystems = (function () {
     ensureGlobal, ensureAlliance, xpNeed, levelBonus, addAllianceExp, donate,
     roleOf, roleName, canCommand, appoint,
     friendOverride, canRescue, capturedAllyLandBlock, onCaptured, releaseCaptive, rebellionCost, rebel, roam,
-    createMilitia, joinMilitia, leaveMilitia, activeMilitia, militiaPanel,
+    wandererLootMain, createMilitia, joinMilitia, leaveMilitia, activeMilitia, militiaPanel,
     siegeOfTeam, installGamePatches
   };
 })();
