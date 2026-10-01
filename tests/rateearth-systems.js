@@ -123,3 +123,57 @@ Game.advance(1);
 ok(Game.tileOwner(frozen) < 0, '解凍後河流領地應移除');
 
 console.log('Wind/frozen-river OK: level-4 hazards +30%/50-rule data + winter river occupation/thaw');
+
+
+// 太祝令／祭壇／祭風：盟主任命 -> 太祝令建壇 -> 符合天氣與風力條件時祈禳5小時風災。
+Game.G.time = 8 * 1440;
+p.copper = 20000;
+if (p.alliance < 0) {
+  const ca = Game.createAlliance(p, '天時盟');
+  ok(ca.ok, '建立測試同盟失敗');
+}
+const a = Game.G.alliances[p.alliance];
+ok(RateEarthSystems.appointWeatherOfficer(p, p.id).ok, '盟主應可任命自己為太祝令');
+ok(RateEarthSystems.isWeatherOfficer(p), '太祝令身份未生效');
+
+let altarTile = -1;
+for (let y = Math.max(1, World.Y(p.cityTile) - 4); y <= Math.min(World.N - 2, World.Y(p.cityTile) + 4) && altarTile < 0; y++) {
+  for (let x = Math.max(1, World.X(p.cityTile) - 4); x <= Math.min(World.N - 2, World.X(p.cityTile) + 4); x++) {
+    const i = World.idx(x, y);
+    if (Game.T.city[i] < 0 && World.isPassable(i)) { altarTile = i; break; }
+  }
+}
+ok(altarTile >= 0, '找不到祭壇測試空地');
+Game.setOwner(altarTile, p.id);
+const ba = RateEarthSystems.buildAltar(p, altarTile);
+ok(ba.ok && ba.city.rateAltar, '太祝令應可在自己空地建祭壇');
+ok(RateEarthSystems.activeAltar(a).id === ba.city.id, '同盟祭壇未登記');
+
+let prayerTarget = -1;
+for (let d = 8; d < 60 && prayerTarget < 0; d++) {
+  Game.G.time = d * 1440;
+  for (let i = 0; i < World.N * World.N; i++) {
+    const w = RateEarthSystems.weatherAt(i), wd = RateEarthSystems.windAt(i);
+    if (['clear','cloudy','overcast'].includes(w.id) && wd.level >= 2 && !RateEarthSystems.prayerAt(i)) { prayerTarget = i; break; }
+  }
+}
+ok(prayerTarget >= 0, '找不到可祭風的天時條件');
+const pw = RateEarthSystems.prayWind(p, prayerTarget);
+ok(pw.ok, '祭風應成功: ' + (pw.msg || ''));
+ok(pw.event.end - pw.event.start === 300, '祭風公開持續時間應為5小時');
+ok(RateEarthSystems.hazardAt(prayerTarget).id === 'windstorm', '祭風應立即套用風災效果');
+near(RateEarthSystems.actionTimeFactor(prayerTarget, 'train'), 1.30, 1e-9, '祭風風阻練兵時間');
+ok(RateEarthSystems.garrisonCovers(prayerTarget, prayerTarget), '風災下駐守中心格仍應生效');
+
+let adj = -1;
+const px = World.X(prayerTarget), py = World.Y(prayerTarget);
+for (let dy = -1; dy <= 1 && adj < 0; dy++) for (let dx = -1; dx <= 1; dx++) {
+  if (!dx && !dy) continue;
+  if (World.inb(px + dx, py + dy)) { adj = World.idx(px + dx, py + dy); break; }
+}
+ok(adj >= 0, '找不到祭風鄰格');
+ok(!RateEarthSystems.garrisonCovers(prayerTarget, adj), '風災「自顧不暇」應把駐守保護縮至中心一格');
+
+Game.G.time = pw.event.end + 1;
+ok(RateEarthSystems.garrisonCovers(prayerTarget, adj), '無風災時駐守應恢復九宮格保護');
+console.log('Prayer/altar OK: Taizhuling appointment + altar + exact 5h wind prayer + garrison disruption');
