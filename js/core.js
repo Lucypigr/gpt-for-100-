@@ -951,6 +951,13 @@ var Game = (function () {
     return units;
   }
   function landGarrison(i) {
+    // 四序天象「江河凝凍」：冬季豪雪/凍雨下的非州界河流可被佔領。
+    // 凍結河面沒有土地守軍與產量，只作為可鋪路的戰略地塊。
+    if (T.terrain[i] === TERRAIN.WATER && typeof RateEarthSystems !== 'undefined' && RateEarthSystems.isFrozenRiver && RateEarthSystems.isFrozenRiver(i)) {
+      let st = G.landSiege[i];
+      if (!st) st = { squads: [], until: G.time + 30 };
+      return { lv: 0, count: 0, heroLv: 0, st };
+    }
     const lv = T.lvl[i];
     const g = CFG.GARRISON[lv];
     let st = G.landSiege[i];
