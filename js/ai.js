@@ -1851,7 +1851,7 @@ var AI = (function () {
     return best;
   }
   function chooseRaiderPassTarget(a, leader) {
-    if (!a || !leader || persona(leader)!=='raider' || a.target>=0) return false;
+    if (!a || !leader || !raiderSelf(leader) || a.target>=0) return false;
     const q=Game.P[a.raiderVictim];
     if (!q || !raiderTargetValid(a,q)) return false;
     // 已控制受害者出生州的關口時，轉回包圍/搶地，不反覆找另一個關。
