@@ -903,6 +903,7 @@ var Game = (function () {
   }
   // 掃蕩：與己方土地的守軍交戰賺經驗，土地歸屬不變
   function resolveSweep(p, team, i, morale) {
+    if (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.adjustMorale) morale = RateEarthSystems.adjustMorale(morale, i, false);
     const atkUnits = teamUnits(p, team, morale);
     const g = CFG.GARRISON[T.lvl[i]];
     const logIt = p.id === G.userId;
@@ -1008,10 +1009,11 @@ var Game = (function () {
       return;
     }
     if (morale === undefined) morale = 100;
-    const atkUnits = teamUnits(p, team, morale);
-    const logIt = p.id === G.userId || tileOwner(i) === G.userId;
     const c = T.city[i];
     const city = c >= 0 ? World.cities[c] : null;
+    if (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.adjustMorale) morale = RateEarthSystems.adjustMorale(morale, i, !!city);
+    const atkUnits = teamUnits(p, team, morale);
+    const logIt = p.id === G.userId || tileOwner(i) === G.userId;
     const targetName = city ? city.name : ((CFG.RES_NAME[CFG.RES[T.res[i]]]) + ' Lv.' + T.lvl[i]);
     const report = logIt ? { id: G.nextReport++, t: G.time, tile: i, target: targetName, atkName: p.name, atkPid: p.id, defName: '', battles: [], result: '', read: false } : null;
     let won = true;
@@ -1021,7 +1023,8 @@ var Game = (function () {
     // 1) 玩家防守部隊
     const defs = defendersAt(i, p);
     for (const d of defs) {
-      const dUnits = teamUnits(d.p, d.team);
+      const dMorale = (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.adjustMorale) ? RateEarthSystems.adjustMorale(100, i, !!city) : 100;
+      const dUnits = teamUnits(d.p, d.team, dMorale);
       const res = Battle.simulate(atkUnits, dUnits, { log: !!report || d.p.id === G.userId });
       applyLosses(p, res.A, outcomeOf(res, 0)); applyLosses(d.p, res.D, outcomeOf(res, 1));
       syncUnits(atkUnits, res.A);
