@@ -945,8 +945,11 @@ var AI = (function () {
   }
   function borderOutposts(p) {
     const m = mem(p);
-    if (m.raidAt !== undefined && G().time - m.raidAt < 30) return m.raidSites;
+    // 新要塞／營帳可能在 30 分鐘快取期間內出現；若城市數改變就立即重掃，
+    // 否則 AI 會看不到剛建立的前線據點，錯失偷襲機會。
+    if (m.raidAt !== undefined && G().time - m.raidAt < 30 && m.raidCityN === World.cities.length) return m.raidSites;
     m.raidAt = G().time;
+    m.raidCityN = World.cities.length;
     const seen = new Set(), sites = [], nearby = [];
     for (const i of p.lands) {
       World.neighbors8(i, nearby);
