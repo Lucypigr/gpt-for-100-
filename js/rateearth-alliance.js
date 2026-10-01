@@ -379,7 +379,7 @@ var RateAllianceSystems = (function () {
       '<div style="margin-top:7px">反叛需求（本作以約48小時當前產量近似；官方未公開完整公式）： ' +
       CFG.RES.map(r => CFG.RES_NAME[r] + ' ' + U.fmt(cost[r])).join('、') + '</div>' +
       '<button class="btn small red" data-rate-rebel style="margin-top:6px">反叛</button>' +
-      '<div style="margin-top:9px"><b>流浪重生</b>　<span class="muted">保留80%四資源、武將與戰法，放棄領地／分城／要塞並退出同盟。</span></div>' +
+      '<div style="margin-top:9px"><b>流浪重生</b>　<span class="muted">需君王殿6級；保留80%四資源、武將與戰法，放棄領地／分城／要塞並退出同盟。原城內設施等級保留但流浪期間不可升級，也不產四資源。</span></div>' +
       '<select data-rate-roam-state>' + birth.map(s => '<option value="' + s.id + '"' + (s.id === p.state ? ' selected' : '') + '>' + esc(s.name) + '</option>').join('') + '</select> ' +
       '<button class="btn small dark" data-rate-roam>成為流浪軍</button>';
     body.appendChild(box);
