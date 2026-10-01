@@ -1,7 +1,7 @@
 'use strict';
 
 // Resource-land visual rule:
-// L1 = clean grass. From L2 upward, each level adds visible resource mass.
+// L1 = clean grass. From L2 upward, every level increases visible resource mass.
 // Gameplay data is untouched; this layer only changes map presentation.
 (function () {
   const proto = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
@@ -35,7 +35,6 @@
   }
 
   proto.drawImage = function (image, ...args) {
-    // terrain-details.png uses image + 8 arguments (source rect + destination rect).
     if (!(image instanceof HTMLImageElement) || args.length !== 8) {
       return nativeDrawImage.call(this, image, ...args);
     }
@@ -51,7 +50,6 @@
     const anchorY = dy + dh * 0.82;
     const tile = Render.tileAt(anchorX, anchorY);
 
-    // Mountains still use the original rock artwork and are not resource land.
     if (tile < 0 || Game.T.terrain[tile] !== TERRAIN.PLAIN) {
       return nativeDrawImage.call(this, image, ...args);
     }
@@ -59,23 +57,22 @@
     const level = Game.T.lvl[tile] || 1;
     const resource = Game.T.res[tile];
     const count = clusterCount(level);
-
-    // Level 1 has no props at all: visually it is plain grass.
     if (count === 0) return;
 
-    // RES order: wood, iron, stone, grain.
     const half = image.naturalWidth / 2;
     let sx = srcX, sy = srcY;
     if (half > 0) {
-      if (resource === 0) { sx = 0; sy = 0; }          // trees
-      else if (resource === 1) { sx = half; sy = 0; } // iron/ore
-      else if (resource === 2) { sx = half; sy = 0; } // stone
-      else if (resource === 3) { sx = 0; sy = half; } // fields
+      if (resource === 0) { sx = 0; sy = 0; }
+      else if (resource === 1) { sx = half; sy = 0; }
+      else if (resource === 2) { sx = half; sy = 0; }
+      else if (resource === 3) { sx = 0; sy = half; }
     }
 
     const scale = baseScale(level);
     for (let n = 0; n < count; n++) {
       const [ox, oy, local] = spots[n];
+      // L4 shares two clusters with L3, but both are visibly larger; every
+      // subsequent tier either adds another cluster or increases total mass.
       const s = scale * local;
       const w = dw * s;
       const h = dh * s;
