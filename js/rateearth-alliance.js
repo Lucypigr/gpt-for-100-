@@ -414,6 +414,36 @@ var RateAllianceSystems = (function () {
         a.members.filter(id => id !== a.leader).map(id => '<option value="' + id + '">' + esc(Game.P[id].name) + '（' + roleName(Game.P[id], a) + '）</option>').join('') +
         '</select><select data-rate-office-role><option value="deputy">副盟主</option><option value="commander">指揮官</option><option value="officer">官員</option><option value="member">撤職</option></select><button class="btn small" data-rate-appoint-office>任命</button></div>';
     }
+
+    if (typeof AI !== 'undefined' && AI.diplomacyOffersFor) {
+      const offers = AI.diplomacyOffersFor(a.id);
+      h += '<div class="sec-t">外交動態</div>';
+      if (offers.length) {
+        h += offers.map(o => {
+          const from = Game.G.alliances[o.from];
+          if (!from) return '';
+          const hrs = Math.max(1, Math.round(o.minutes / 60));
+          return '<div class="target-box"><b>〔' + esc(from.name) + '〕</b> 提出' + (o.kind === 'truce' ? '停戰' : '互不侵犯') + ' ' + hrs + ' 小時' +
+            (a.leader === p.id ? '<br><button class="btn small gold" data-rate-dip-accept="' + o.id + '">接受</button> <button class="btn small dark" data-rate-dip-reject="' + o.id + '">拒絕</button>' : '<br><span class="muted">等待盟主處理</span>') + '</div>';
+        }).join('');
+      } else h += '<div class="muted">目前沒有待處理的外交提案。</div>';
+
+      const me = Game.P[a.leader];
+      const near = Game.G.alliances.filter(b => b && !b.dead && b.id !== a.id).map(b => {
+        const L = Game.P[b.leader];
+        const d = L && me ? World.dist(L.cityTile, me.cityTile) : 9999;
+        return { b, L, d };
+      }).filter(x => x.L && x.d <= 120).sort((x,y)=>x.d-y.d).slice(0,6);
+      if (near.length) {
+        h += '<div class="muted" style="margin-top:7px">鄰近勢力觀察（只顯示行為印象，不公開人格數值）</div>';
+        h += '<table class="tbl"><tr><th>同盟</th><th>盟主印象</th><th>關係</th></tr>' + near.map(x => {
+          const tags = x.L.ai && AI.personalityTags ? AI.personalityTags(x.L) : [];
+          const m = AI.allianceMemory ? AI.allianceMemory(a, x.b) : { trust:0, hate:0 };
+          let relation = AI.treatyActive && AI.treatyActive(a.id, x.b.id) ? '協議中' : x.b.enemy === a.id || a.enemy === x.b.id ? '交戰' : m.hate >= 45 ? '敵視' : m.trust >= 25 ? '友好' : '觀望';
+          return '<tr><td>〔' + esc(x.b.name) + '〕</td><td>' + esc(tags.length ? tags.join('、') : '尚難判斷') + '</td><td>' + relation + '</td></tr>';
+        }).join('') + '</table>';
+      }
+    }
     box.innerHTML = h;
     body.appendChild(box);
   }
@@ -439,6 +469,22 @@ var RateAllianceSystems = (function () {
         const ms = document.querySelector('[data-rate-office-member]'), rr = document.querySelector('[data-rate-office-role]');
         const r = appoint(Game.P[Game.G.userId], ms ? +ms.value : -1, rr ? rr.value : '');
         toast(r.ok ? '官職已更新' : r.msg, r.ok ? 'good' : 'warn'); rerenderExtras(); return;
+      }
+      b = e.target.closest && e.target.closest('[data-rate-dip-accept]');
+      if (b) {
+        e.preventDefault(); e.stopPropagation();
+        const p = Game.P[Game.G.userId], a = allianceOf(p);
+        if (!a || a.leader !== p.id) { toast('只有盟主可以處理外交提案', 'warn'); return; }
+        const r = AI.respondDiplomacyOffer(a.id, +b.getAttribute('data-rate-dip-accept'), true);
+        toast(r.ok ? '已接受外交提案' : r.msg, r.ok ? 'good' : 'warn'); rerenderExtras(); return;
+      }
+      b = e.target.closest && e.target.closest('[data-rate-dip-reject]');
+      if (b) {
+        e.preventDefault(); e.stopPropagation();
+        const p = Game.P[Game.G.userId], a = allianceOf(p);
+        if (!a || a.leader !== p.id) { toast('只有盟主可以處理外交提案', 'warn'); return; }
+        const r = AI.respondDiplomacyOffer(a.id, +b.getAttribute('data-rate-dip-reject'), false);
+        toast(r.ok ? '已拒絕外交提案' : r.msg, r.ok ? 'info' : 'warn'); rerenderExtras(); return;
       }
       b = e.target.closest && e.target.closest('[data-rate-rebel]');
       if (b) {
