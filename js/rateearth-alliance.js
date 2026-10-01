@@ -435,12 +435,14 @@ var RateAllianceSystems = (function () {
         return { b, L, d };
       }).filter(x => x.L && x.d <= 120).sort((x,y)=>x.d-y.d).slice(0,6);
       if (near.length) {
-        h += '<div class="muted" style="margin-top:7px">鄰近勢力觀察（只顯示行為印象，不公開人格數值）</div>';
-        h += '<table class="tbl"><tr><th>同盟</th><th>盟主印象</th><th>關係</th></tr>' + near.map(x => {
-          const tags = x.L.ai && AI.personalityTags ? AI.personalityTags(x.L) : [];
-          const m = AI.allianceMemory ? AI.allianceMemory(a, x.b) : { trust:0, hate:0 };
-          let relation = AI.treatyActive && AI.treatyActive(a.id, x.b.id) ? '協議中' : x.b.enemy === a.id || a.enemy === x.b.id ? '交戰' : m.hate >= 45 ? '敵視' : m.trust >= 25 ? '友好' : '觀望';
-          return '<tr><td>〔' + esc(x.b.name) + '〕</td><td>' + esc(tags.length ? tags.join('、') : '尚難判斷') + '</td><td>' + relation + '</td></tr>';
+        h += '<div class="muted" style="margin-top:7px">鄰近勢力觀察（只顯示行為印象，不公開內部人格數值）</div>';
+        h += '<table class="tbl"><tr><th>同盟</th><th>近期作風</th><th>外交聲譽</th><th>對我方態度</th></tr>' + near.map(x => {
+          const style = x.L.ai && AI.styleSummary ? AI.styleSummary(x.L) : '尚難判斷';
+          const rep = x.L.ai && AI.reputationSummary ? AI.reputationSummary(x.L) : '未知';
+          const att = AI.attitudeSummary ? AI.attitudeSummary(a, x.b.id) : '觀望';
+          const m = AI.allianceMemory ? AI.allianceMemory(a, x.b) : null;
+          const marks = m ? (m.betrayals ? ' <span class="bad">曾背約</span>' : m.gifts ? ' <span class="good">曾援助</span>' : '') : '';
+          return '<tr><td>〔' + esc(x.b.name) + '〕</td><td>' + esc(style) + '</td><td>' + esc(rep) + marks + '</td><td>' + esc(att) + '</td></tr>';
         }).join('') + '</table>';
       }
     }
