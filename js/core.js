@@ -1014,9 +1014,15 @@ var Game = (function () {
     const ownerAlli = tileAlliance(i);
     const isCity = c >= 0;
     const city = isCity ? World.cities[c] : null;
+    const rescueVictim = ownerPid >= 0 && typeof RateAllianceSystems !== 'undefined' &&
+      RateAllianceSystems.canRescue && RateAllianceSystems.canRescue(attacker, P[ownerPid]) ? P[ownerPid] : null;
+    const defendPid = rescueVictim ? rescueVictim.captor : ownerPid;
+    const defendPlayer = defendPid >= 0 ? P[defendPid] : null;
+    const defendAlli = rescueVictim && defendPlayer ? defendPlayer.alliance : ownerAlli;
     for (const q of P) {
       if (q.id === attacker.id) continue;
-      if (!(q.id === ownerPid || (ownerAlli >= 0 && q.alliance === ownerAlli))) continue;
+      // 解救戰改由上級/俘虜方的駐守部隊防守，不會讓被俘盟友反過來攻擊救援者。
+      if (!(q.id === defendPid || (defendAlli >= 0 && q.alliance === defendAlli))) continue;
       for (const tm of q.teams) {
         if (!tm.slots[0]) continue;
         const bh = heroByUid(q, tm.slots[0]);
