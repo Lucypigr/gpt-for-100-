@@ -60,13 +60,13 @@ ok(pr.cooperation>coop0,'合作記憶未更新');
 // 存讀檔後人格與外交記憶必須完全保留。
 const profileBefore=JSON.stringify(Game.P.map(p=>p.ai?{id:p.id,traits:p.prof.traits,reputation:p.prof.reputation}:null));
 const dipBefore=JSON.stringify(aa.diplomacy);
-const peopleBefore=JSON.stringify(ais[0].aiMem.people);
+const peopleBefore=JSON.stringify(ais[0].aiRelations);
 const save=Game.serialize();
 Game.deserialize(save);
 const profileAfter=JSON.stringify(Game.P.map(p=>p.ai?{id:p.id,traits:p.prof.traits,reputation:p.prof.reputation}:null));
 eq(profileAfter,profileBefore,'存讀檔後人格改變');
 const aa2=Game.G.alliances[aa.id];
 eq(JSON.stringify(aa2.diplomacy),dipBefore,'存讀檔後同盟外交記憶改變');
-eq(JSON.stringify(Game.P[ais[0].id].aiMem.people),peopleBefore,'存讀檔後個人外交記憶改變');
+eq(JSON.stringify(Game.P[ais[0].id].aiRelations),peopleBefore,'存讀檔後個人外交記憶改變');
 
 console.log('AI personality OK: 10 traits + distinct war/backstab choices + persistent pair memories');
