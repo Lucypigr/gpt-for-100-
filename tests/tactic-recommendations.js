@@ -26,9 +26,8 @@ for (const h of target) {
 ok(!missing.length, '缺少推薦：'+missing.join('、'));
 ok(!TACTIC_RECOMMENDATIONS.allCovered().length, 'allCovered 應為空');
 
-const five = target.filter(h=>h.star===5);
-const uncuratedFive = five.filter(h=>!TACTIC_RECOMMENDATIONS.isCurated(h));
-ok(!uncuratedFive.length, '五星尚未逐人精修：'+uncuratedFive.map(h=>h.name).join('、'));
+const uncurated = target.filter(h=>!TACTIC_RECOMMENDATIONS.isCurated(h));
+ok(!uncurated.length, '尚未逐人精修：'+uncurated.map(h=>h.name).join('、'));
 
 const counts = [3,4,5].map(star => [star, target.filter(h=>h.star===star).length]);
 console.log('Tactic recommendations OK:', counts.map(x=>x[0]+'★ '+x[1]).join(', '), 'total', target.length);
