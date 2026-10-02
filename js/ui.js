@@ -120,7 +120,11 @@ var UI = (function () {
     hudToasts();
     if (panel && now - lastPanelRefresh > 1000 && !$('#modal').classList.contains('hidden')) {
       lastPanelRefresh = now;
-      if (['city', 'teams', 'season', 'alliance', 'quests'].includes(panel) && !teamPick) refreshPanel(true);
+      const modal = $('#modal');
+      const active = document.activeElement;
+      const editingPanel = !!(active && modal && modal.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName));
+      // 不要在玩家輸入表單時整個重建面板，否則同盟名稱等輸入會每秒被清空。
+      if (['city', 'teams', 'season', 'alliance', 'quests'].includes(panel) && !teamPick && !editingPanel) refreshPanel(true);
     }
     if (tileSel >= 0 && now - (update.tp || 0) > 1000) { update.tp = now; if (tilePopMode === 'info') renderTilePop(); }
     if (G.over && !update.shownOver) { update.shownOver = true; openPanel('settle'); }
@@ -720,7 +724,10 @@ var UI = (function () {
     const scrollers = {};
     body.querySelectorAll('[data-keep]').forEach(el => { scrollers[el.dataset.keep] = el.scrollTop; });
     const f = PANELS[panel];
+    // 同盟面板會定時刷新；保留尚未送出的盟名，避免非輸入狀態的刷新把草稿吃掉。
+    const allianceNameDraft = panel === 'alliance' && $('#alli-name-in') ? $('#alli-name-in').value : null;
     body.innerHTML = f ? f() : '';
+    if (allianceNameDraft !== null && $('#alli-name-in')) $('#alli-name-in').value = allianceNameDraft;
     body.querySelectorAll('[data-keep]').forEach(el => { if (scrollers[el.dataset.keep] !== undefined) el.scrollTop = scrollers[el.dataset.keep]; });
     if (soft) body.scrollTop = st;
     if (panel === 'settings') fillHist('#save-hist');
@@ -968,8 +975,9 @@ var UI = (function () {
         let h = '';
         const inv = (G.invites || []).filter(x => G.alliances[x.a] && !G.alliances[x.a].dead);
         if (inv.length) h += '<div class="target-box"><b>同盟邀請：</b>' + inv.map(x => { const a = G.alliances[x.a]; return '〔' + E(a.name) + '〕（' + a.members.length + '人，' + World.states[a.state].name + '）<button class="btn small gold" data-act="join" data-a="' + a.id + '">接受</button>'; }).join('　') + '</div>';
-        h += '<div class="sec-t">創建同盟</div><div style="display:flex;gap:6px;align-items:center"><input id="alli-name-in" maxlength="8" placeholder="同盟名稱(1~8字)" style="background:#efe2c2;border:1px solid #8d6b33;padding:5px"><button class="btn red" data-act="create">創建（銅幣 10000）</button></div>';
-        if (user.copper < CFG.ALLIANCE_CREATE_COST.copper) h += '<div class="warn" style="margin-top:4px">目前銅幣 ' + U.fmtFull(Math.floor(user.copper)) + '，不足 10000。升級民居可提高銅幣收入，或 <span class="link" data-act="open" data-panel="recharge">模擬儲值銅幣</span>。</div>';
+        const createCost = CFG.ALLIANCE_CREATE_COST.copper || 0;
+        h += '<div class="sec-t">創建同盟</div><div style="display:flex;gap:6px;align-items:center"><input id="alli-name-in" maxlength="8" placeholder="同盟名稱(1~8字)" style="background:#efe2c2;border:1px solid #8d6b33;padding:5px"><button class="btn red" data-act="create">創建（銅幣 ' + U.fmtFull(createCost) + '）</button></div>';
+        if (user.copper < createCost) h += '<div class="warn" style="margin-top:4px">目前銅幣 ' + U.fmtFull(Math.floor(user.copper)) + '，不足 ' + U.fmtFull(createCost) + '。升級民居可提高銅幣收入，或 <span class="link" data-act="open" data-panel="recharge">模擬儲值銅幣</span>。</div>';
         h += '<div class="sec-t">加入同盟</div><table class="tbl"><tr><th>同盟</th><th>盟主</th><th>人數</th><th>城池</th><th>勢力</th><th>主要州</th><th></th></tr>';
         const al = G.alliances.filter(a => !a.dead).sort((a, b) => (b.state === user.state) - (a.state === user.state) || b.power - a.power);
         for (const a of al) {
