@@ -1282,7 +1282,7 @@ var Game = (function () {
     if (p.alliance >= 0) return err('已在同盟中');
     if (!name || name.length > 8) return err('同盟名稱需 1~8 字');
     if (G.alliances.some(a => !a.dead && a.name === name)) return err('名稱已被使用');
-    if (!canAfford(p, CFG.ALLIANCE_CREATE_COST)) return err('銅幣不足（需要 10000）');
+    if (!canAfford(p, CFG.ALLIANCE_CREATE_COST)) return err('銅幣不足（需要 ' + CFG.ALLIANCE_CREATE_COST.copper + '）');
     pay(p, CFG.ALLIANCE_CREATE_COST);
     const a = { id: G.alliances.length, name, leader: p.id, members: [], color: ALLI_COLORS[G.alliances.length % ALLI_COLORS.length], cities: [], created: G.time, target: -1, targetSince: 0, notice: '', dead: false, state: p.state, open: true, power: 0, marks: [] };
     G.alliances.push(a);
