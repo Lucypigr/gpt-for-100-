@@ -207,8 +207,13 @@ var AI = (function () {
     }
     return true;
   }
+  let publicEnemyCacheTime=-1, publicEnemyCache=[];
   function activePublicEnemies() {
-    return G().alliances.filter(a=>publicEnemyActive(a)).sort((x,y)=>raiderInfamyOfAlliance(y)-raiderInfamyOfAlliance(x));
+    const g=G();
+    if (publicEnemyCacheTime===g.time) return publicEnemyCache;
+    publicEnemyCache=g.alliances.filter(a=>publicEnemyActive(a)).sort((x,y)=>raiderInfamyOfAlliance(y)-raiderInfamyOfAlliance(x));
+    publicEnemyCacheTime=g.time;
+    return publicEnemyCache;
   }
   // 同一陣營：同盟相同，或有從屬（附庸）關係
   function sameBloc(a1, a2) {
@@ -2179,7 +2184,12 @@ var AI = (function () {
 
   // ================= 聊天 =================
   const pending = [];
-  function later(p, ch, text, delayMin) { pending.push({ at: G().time + (delayMin || 0), pid: p.id, ch, text }); }
+  function later(p, ch, text, delayMin) {
+    // 大規模戰爭/全服公敵時會同時產生大量延遲聊天；限制佇列長度，
+    // 避免長時間遊玩後 pending 無上限膨脹拖慢每 3 分鐘的 chatTick 掃描。
+    if (pending.length >= 500) pending.splice(0, pending.length - 449);
+    pending.push({ at: G().time + (delayMin || 0), pid: p.id, ch, text });
+  }
   function chatTick() {
     const g = G();
     for (let k = pending.length - 1; k >= 0; k--) {
