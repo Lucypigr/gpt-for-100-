@@ -329,6 +329,28 @@ var Render = (function () {
     c.moveTo(sx, sy - hh); c.lineTo(sx + hw, sy); c.lineTo(sx, sy + hh); c.lineTo(sx - hw, sy); c.closePath();
   }
 
+  // 只畫螢幕可見土地的細邊界；比全地圖格線省很多，也不會蓋過資源/城池。
+  function drawVisibleTileGrid(x0, x1, y0, y1, hw, hh, tw) {
+    if (tw < 26) return;
+    ctx.save();
+    ctx.strokeStyle = tw >= 55 ? 'rgba(54,45,29,.28)' : 'rgba(54,45,29,.20)';
+    ctx.lineWidth = tw >= 70 ? 1.15 : 0.8;
+    ctx.beginPath();
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const [sx, sy] = toScreen(x + 0.5, y + 0.5);
+        if (!onScreen(sx, sy, tw)) continue;
+        ctx.moveTo(sx, sy - hh);
+        ctx.lineTo(sx + hw, sy);
+        ctx.lineTo(sx, sy + hh);
+        ctx.lineTo(sx - hw, sy);
+        ctx.closePath();
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function draw(now) {
     if (!terrainCv) return;
     updateOverlay(now);
@@ -360,6 +382,7 @@ var Render = (function () {
     ctx.drawImage(overlayCv, 0, 0);
     ctx.restore();
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawVisibleTileGrid(x0, x1, y0, y1, hw, hh, tw);
     if (tw >= 30) drawBorders(x0, x1, y0, y1, hw, hh);
     drawAllianceTarget(hw, hh);
     drawCities(hw, hh, tw);
