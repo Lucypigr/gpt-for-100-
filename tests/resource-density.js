@@ -27,6 +27,8 @@ function makeContext(canvas) {
   return { canvas, calls: [], save() { stack.push(offset.slice()); },
     restore() { offset = stack.pop(); },
     translate(x, y) { offset[0] += x; offset[1] += y; }, scale() {},
+    beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, stroke() {},
+    ellipse() { this.calls.push({ offset: offset.slice(), kind: 'object' }); },
     drawImage(...args) { this.calls.push({ offset: offset.slice(), args }); } };
 }
 const sandbox = { document: { createElement() {
@@ -53,7 +55,7 @@ const atlas = canvases.find(c => c.width === 1024 && c.height === 2048);
 assert.ok(atlas, 'Use one bounded 4-resource × 8-level atlas');
 for (let res = 0; res < 4; res++) for (let level = 2; level <= 9; level++) {
   const objects = atlas.getContext().calls.filter(c =>
-    c.offset[0] === res * 256 && c.offset[1] === (level - 2) * 256);
+    c.kind === 'object' && Math.floor(c.offset[0] / 256) === res && Math.floor(c.offset[1] / 256) === level - 2);
   assert.equal(objects.length, level - 1, 'Each higher level must add a resource group');
 }
 const allocated = canvases.length;
@@ -61,14 +63,15 @@ for (const zoom of [24, 58, 76, 150]) for (let level = 2; level <= 9; level++) {
   sandbox.Render.testDraw(2, level, 300, 400, zoom, 1);
 }
 assert.equal(canvases.length, allocated, 'Zoom and tile position must not allocate more textures');
-assert.equal(allocated, 3, 'One atlas plus two pre-tinted rock sources');
+assert.equal(allocated, 1, 'Geometry uses only one atlas, no image/tint sprites');
+assert.ok(atlas.getContext().calls.every(c => c.kind === 'object'), 'Resource atlas must contain geometry, not image copies');
 assert.ok(render.includes('function drawVisibleTileGrid('),
   '地塊邊界應只由可見範圍渲染');
 assert.ok(render.includes('touchDevice && tw < 55'),
   '手機縮小地圖時應停止畫細格線');
 
 for (const html of [index, play]) {
-  assert.match(html, /js\/render\.js\?v=20261002-densityatlas1/,
+  assert.match(html, /js\/render\.js\?v=20261002-geometry1/,
     '頁面應載入效能優先 render.js，避免手機使用舊快取');
 }
 

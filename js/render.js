@@ -12,9 +12,6 @@ var Render = (function () {
   let showAIMarch = true;
   let detailSprites = null;
   let terrainArt = null;
-  // Only two bounded, pre-tinted rock sprites. Never filter the live map per tile:
-  // software Canvas can spend seconds flushing hundreds of filtered draws.
-  const rockTints = new Map();
   const cityArt = {};
   const fx = [];
   const TEX = 4; // 地形貼圖每格像素
@@ -180,79 +177,84 @@ var Render = (function () {
     }
   }
 
-  // Bake all 4 resource types × 8 levels once. Each visible tile still costs
-  // one drawImage, regardless of how many objects its level contains.
-  let resourceAtlas = null, resourceAtlasSource = null;
+  // Resource geometry is baked once, never rebuilt for zoom, tiles or image loads.
+  // Mountains/water keep their existing artwork; resource objects need no images.
+  let resourceAtlas = null;
   const RESOURCE_CELL = 256;
+  function resourceFace(c, color, points) {
+    c.fillStyle = color;
+    c.beginPath(); c.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) c.lineTo(points[i][0], points[i][1]);
+    c.closePath(); c.fill();
+  }
+  function drawGeometricResource(c, res, x, y, variation) {
+    c.save(); c.translate(x, y);
+    const r = 22 + variation % 3 * 2;
+    c.fillStyle = 'rgba(35,44,27,.20)';
+    c.beginPath(); c.ellipse(3, 3, r * 1.05, r * .40, 0, 0, Math.PI * 2); c.fill();
+    if (res === 0) {
+      // Cedar: warm trunk and layered, faceted foliage, lit from the upper left.
+      resourceFace(c, '#795439', [[-4,0],[-4,-24],[1,-26],[1,2]]);
+      resourceFace(c, '#4c402b', [[1,2],[1,-26],[5,-23],[5,0]]);
+      for (const [w, base, top] of [[r,-13,-48],[r*.78,-28,-61]]) {
+        resourceFace(c, '#527c45', [[-w,base],[0,top],[w,base],[0,base+9]]);
+        resourceFace(c, '#86a85d', [[-w,base],[0,top],[0,base+9]]);
+        resourceFace(c, '#375b3e', [[0,top],[w,base],[0,base+9]]);
+      }
+    } else if (res === 1 || res === 2) {
+      const iron = res === 1;
+      const top = iron ? '#82959a' : '#d8d0b4';
+      const left = iron ? '#516875' : '#aaa58e';
+      const right = iron ? '#303f4b' : '#757f75';
+      const h = 27 + variation % 3 * 4;
+      resourceFace(c, left, [[-r,-4],[-r*.60,-h],[1,-h-7],[3,-8],[-4,8]]);
+      resourceFace(c, right, [[3,-8],[1,-h-7],[r*.72,-h*.78],[r,0],[-4,8]]);
+      resourceFace(c, top, [[-r*.60,-h],[1,-h-7],[r*.72,-h*.78],[3,-h*.53]]);
+      resourceFace(c, iron ? '#a69a68' : '#ebe3c8',
+        [[-r*.56,-h+1],[-r*.43,-h+2],[-r*.14,-9],[-r*.25,-7]]);
+      if (iron) resourceFace(c, '#91a6ad', [[8,-18],[13,-21],[16,-13],[11,-9]]);
+    } else {
+      // Small raised isometric beds with golden crop rows and dark furrows.
+      const w = 26, h = 13;
+      resourceFace(c, '#756040', [[-w,0],[0,h],[w,0],[w,5],[0,h+5],[-w,5]]);
+      resourceFace(c, '#b19a57', [[0,-h],[-w,0],[0,h],[w,0]]);
+      for (let row = 0; row < 4; row++) {
+        const t = (row + .5) / 4;
+        const ax = -w + w*t, ay = -h*t;
+        const bx = w*t, by = h*(1-t);
+        c.strokeStyle = '#766a3c'; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(ax,ay); c.lineTo(bx,by); c.stroke();
+        c.strokeStyle = '#e0c46c'; c.lineWidth = 3;
+        c.beginPath(); c.moveTo(ax,ay-4); c.lineTo(bx,by-4); c.stroke();
+        c.strokeStyle = '#f0da88'; c.lineWidth = 1;
+        c.beginPath(); c.moveTo(ax,ay-5); c.lineTo(bx,by-5); c.stroke();
+      }
+    }
+    c.restore();
+  }
   function buildResourceAtlas() {
-    const artReady = terrainArt && terrainArt.complete && terrainArt.naturalWidth;
-    const source = artReady ? terrainArt : detailSprites;
-    if (resourceAtlas && resourceAtlasSource === source) return;
+    if (resourceAtlas) return;
     const atlas = document.createElement('canvas');
     atlas.width = RESOURCE_CELL * 4; atlas.height = RESOURCE_CELL * 8;
     const c = atlas.getContext('2d');
-    // Fixed footprints within the tile; increasing levels add objects rather
-    // than increasing per-frame work. Draw back-to-front for natural overlap.
-    const spots = [[128, 126], [82, 105], [174, 105], [128, 79],
-      [58, 129], [198, 129], [101, 153], [155, 153]];
-    for (let res = 0; res < 4; res++) {
-      for (let level = 2; level <= 9; level++) {
-        const count = level - 1;
-        const objects = spots.slice(0, count).sort((a, b) => a[1] - b[1]);
-        c.save();
-        c.translate(res * RESOURCE_CELL, (level - 2) * RESOURCE_CELL);
-        for (const [x, y] of objects) {
-          const size = res === 3 ? 86 : 92;
-          const dx = x - size / 2, dy = y - size * .78;
-          if (res === 1 || res === 2) c.drawImage(tintedRock(res), dx, dy, size, size);
-          else if (artReady) {
-            // The painted objects cross quadrant boundaries; crop their actual
-            // bounds so dense fields do not repeat stray tree fragments.
-            const box = res === 0 ? [0, 0, .56, .55] : [.025, .58, .54, .35];
-            const unit = terrainArt.naturalWidth;
-            const height = size * box[3] / box[2];
-            c.drawImage(terrainArt, box[0] * unit, box[1] * unit, box[2] * unit, box[3] * unit,
-              dx, y - height * .78, size, height);
-          } else {
-            const sprite = res === 0 ? detailSprites.forest[0] : detailSprites.field;
-            c.drawImage(sprite, dx, dy, size, size);
-          }
-        }
-        c.restore();
-      }
+    const spots = [[128,126],[82,105],[174,105],[128,79],
+      [58,129],[198,129],[101,153],[155,153]];
+    for (let res = 0; res < 4; res++) for (let level = 2; level <= 9; level++) {
+      const objects = spots.slice(0, level - 1).map(([x,y],i) => ({x,y,i})).sort((a,b) => a.y-b.y);
+      c.save(); c.translate(res * RESOURCE_CELL, (level - 2) * RESOURCE_CELL);
+      for (const {x,y,i} of objects) drawGeometricResource(c, res, x, y, i);
+      c.restore();
     }
-    resourceAtlas = atlas; resourceAtlasSource = source;
+    resourceAtlas = atlas;
   }
-
   function drawSimpleResourceLand(res, lv, sx, sy, tw, variant) {
     if (lv <= 1) return;
     const level = Math.max(2, Math.min(9, lv | 0));
     buildResourceAtlas();
     const w = tw * 1.04, h = tw * .78;
-    ctx.save();
-    if (variant % 2) { ctx.translate(sx * 2, 0); ctx.scale(-1, 1); }
+    // Keep lighting consistent across tiles; no per-tile filter or mirroring.
     ctx.drawImage(resourceAtlas, res * RESOURCE_CELL, (level - 2) * RESOURCE_CELL,
       RESOURCE_CELL, RESOURCE_CELL, sx - w / 2, sy - h * .57, w, h);
-    ctx.restore();
-  }
-
-  function tintedRock(res) {
-    const artReady = terrainArt && terrainArt.complete && terrainArt.naturalWidth;
-    const source = artReady ? terrainArt : detailSprites.rock;
-    const cached = rockTints.get(res);
-    if (cached && cached.source === source) return cached.canvas;
-    const canvas = document.createElement('canvas');
-    // Supports the maximum zoom at DPR 2; never cache by tile, frame or zoom.
-    canvas.width = canvas.height = 256;
-    const c = canvas.getContext('2d');
-    c.filter = res === 1 ? 'brightness(.66) saturate(.55) contrast(1.22)'
-      : 'brightness(1.10) saturate(.46) contrast(.96)';
-    if (artReady) {
-      const unit = source.naturalWidth;
-      c.drawImage(source, unit * .56, unit * .12, unit * .42, unit * .42, 0, 0, 256, 256);
-    } else c.drawImage(source, 0, 0, 256, 256);
-    rockTints.set(res, { source, canvas });
-    return canvas;
   }
 
   // ============ 勢力覆蓋 ============
