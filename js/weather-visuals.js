@@ -51,8 +51,11 @@ var WeatherVisuals = (function () {
       ctx.restore();
     }
   }
+  let eventCacheMinute = -1, eventCache = [];
   function activeEvents() {
-    const t = Game.G.time, day = Math.floor(t / 1440), seed = Game.G.seed || 1, out = [];
+    const t = Game.G.time;
+    if (eventCacheMinute === t) return eventCache;
+    const day = Math.floor(t / 1440), seed = Game.G.seed || 1, out = [];
     for (let st = 0; st < World.states.length; st++) {
       for (const d of [day, day - 1]) {
         const a = RateEarthSystems.specialEventForState(d, st, seed);
@@ -60,6 +63,7 @@ var WeatherVisuals = (function () {
         for (const ev of [a, b]) if (ev && t >= ev.start && t < ev.hazardEnd) out.push(ev);
       }
     }
+    eventCacheMinute = t; eventCache = out;
     return out;
   }
   function onView(ev) {
