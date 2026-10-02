@@ -22,8 +22,32 @@ var main = { started: false };
 
   let last = performance.now();
   let lastSave = performance.now();
+  let lastRender = 0;
   let hiddenPaused = false;
   let lastDay = -1;
+  let persistQueued = false;
+
+  function schedulePersist(kind) {
+    if (persistQueued || !main.started) return;
+    persistQueued = true;
+    const run = () => {
+      persistQueued = false;
+      if (!main.started) return;
+      let body = null;
+      try { body = Game.serialize(); } catch (e) { console.warn('serialize failed', e); }
+      const ok = Game.save(body);
+      UI.saveMeta();
+      if (kind) UI.snapshot(kind, body);
+      if (!ok && !main.saveWarned) {
+        main.saveWarned = true;
+        UI.toast('自動存檔失敗（瀏覽器儲存空間不足），進度仍會嘗試保留備份', 'bad');
+      }
+    };
+    // 大型後期存檔的 JSON 序列化會佔用主執行緒；盡量放到瀏覽器空閒時，
+    // 避免和地圖繪製、AI 戰鬥在同一幀搶 CPU。
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2500 });
+    else setTimeout(run, 0);
+  }
 
   function frame(now) {
     const dt = Math.min(0.25, (now - last) / 1000);
@@ -31,16 +55,24 @@ var main = { started: false };
     if (main.started) {
       const G = Game.G;
       if (!G.paused && !G.over) Game.advance(dt * CFG.BASE_SPEED * G.speed);
-      Render.draw(now);
+
+      // 後期部隊/戰線變多時將地圖自動降到約 30 FPS；遊戲模擬仍照原速度跑。
+      // 這能避免上千條行軍線＋天氣特效把主執行緒吃滿。
+      const busyMap = G.marches && G.marches.length > 350;
+      const renderGap = busyMap ? 33 : 16;
+      if (now - lastRender >= renderGap) { lastRender = now; Render.draw(now); }
+
       UI.update(now);
       if (now - lastSave > 60000) {
         lastSave = now;
-        if (!Game.save() && !main.saveWarned) { main.saveWarned = true; UI.toast('自動存檔失敗（瀏覽器儲存空間不足），進度仍會每遊戲日備份到「存檔紀錄」', 'bad'); }
-        UI.saveMeta();
+        schedulePersist(null);
       }
-      // 每過一個遊戲日保留一份自動備份到存檔紀錄
+      // 每過一個遊戲日保留一份自動備份；與一般自動存檔共用同一次序列化。
       const day = Game.day();
-      if (day !== lastDay) { if (lastDay >= 0) UI.snapshot('auto'); lastDay = day; }
+      if (day !== lastDay) {
+        if (lastDay >= 0) { lastSave = now; schedulePersist('auto'); }
+        lastDay = day;
+      }
     }
     requestAnimationFrame(frame);
   }
