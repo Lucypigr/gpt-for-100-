@@ -975,8 +975,9 @@ var UI = (function () {
         let h = '';
         const inv = (G.invites || []).filter(x => G.alliances[x.a] && !G.alliances[x.a].dead);
         if (inv.length) h += '<div class="target-box"><b>同盟邀請：</b>' + inv.map(x => { const a = G.alliances[x.a]; return '〔' + E(a.name) + '〕（' + a.members.length + '人，' + World.states[a.state].name + '）<button class="btn small gold" data-act="join" data-a="' + a.id + '">接受</button>'; }).join('　') + '</div>';
-        h += '<div class="sec-t">創建同盟</div><div style="display:flex;gap:6px;align-items:center"><input id="alli-name-in" maxlength="8" placeholder="同盟名稱(1~8字)" style="background:#efe2c2;border:1px solid #8d6b33;padding:5px"><button class="btn red" data-act="create">創建（銅幣 10000）</button></div>';
-        if (user.copper < CFG.ALLIANCE_CREATE_COST.copper) h += '<div class="warn" style="margin-top:4px">目前銅幣 ' + U.fmtFull(Math.floor(user.copper)) + '，不足 10000。升級民居可提高銅幣收入，或 <span class="link" data-act="open" data-panel="recharge">模擬儲值銅幣</span>。</div>';
+        const createCost = CFG.ALLIANCE_CREATE_COST.copper || 0;
+        h += '<div class="sec-t">創建同盟</div><div style="display:flex;gap:6px;align-items:center"><input id="alli-name-in" maxlength="8" placeholder="同盟名稱(1~8字)" style="background:#efe2c2;border:1px solid #8d6b33;padding:5px"><button class="btn red" data-act="create">創建（銅幣 ' + U.fmtFull(createCost) + '）</button></div>';
+        if (user.copper < createCost) h += '<div class="warn" style="margin-top:4px">目前銅幣 ' + U.fmtFull(Math.floor(user.copper)) + '，不足 ' + U.fmtFull(createCost) + '。升級民居可提高銅幣收入，或 <span class="link" data-act="open" data-panel="recharge">模擬儲值銅幣</span>。</div>';
         h += '<div class="sec-t">加入同盟</div><table class="tbl"><tr><th>同盟</th><th>盟主</th><th>人數</th><th>城池</th><th>勢力</th><th>主要州</th><th></th></tr>';
         const al = G.alliances.filter(a => !a.dead).sort((a, b) => (b.state === user.state) - (a.state === user.state) || b.power - a.power);
         for (const a of al) {
