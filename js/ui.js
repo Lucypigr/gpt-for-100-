@@ -120,7 +120,11 @@ var UI = (function () {
     hudToasts();
     if (panel && now - lastPanelRefresh > 1000 && !$('#modal').classList.contains('hidden')) {
       lastPanelRefresh = now;
-      if (['city', 'teams', 'season', 'alliance', 'quests'].includes(panel) && !teamPick) refreshPanel(true);
+      const modal = $('#modal');
+      const active = document.activeElement;
+      const editingPanel = !!(active && modal && modal.contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName));
+      // 不要在玩家輸入表單時整個重建面板，否則同盟名稱等輸入會每秒被清空。
+      if (['city', 'teams', 'season', 'alliance', 'quests'].includes(panel) && !teamPick && !editingPanel) refreshPanel(true);
     }
     if (tileSel >= 0 && now - (update.tp || 0) > 1000) { update.tp = now; if (tilePopMode === 'info') renderTilePop(); }
     if (G.over && !update.shownOver) { update.shownOver = true; openPanel('settle'); }
@@ -720,7 +724,10 @@ var UI = (function () {
     const scrollers = {};
     body.querySelectorAll('[data-keep]').forEach(el => { scrollers[el.dataset.keep] = el.scrollTop; });
     const f = PANELS[panel];
+    // 同盟面板會定時刷新；保留尚未送出的盟名，避免非輸入狀態的刷新把草稿吃掉。
+    const allianceNameDraft = panel === 'alliance' && $('#alli-name-in') ? $('#alli-name-in').value : null;
     body.innerHTML = f ? f() : '';
+    if (allianceNameDraft !== null && $('#alli-name-in')) $('#alli-name-in').value = allianceNameDraft;
     body.querySelectorAll('[data-keep]').forEach(el => { if (scrollers[el.dataset.keep] !== undefined) el.scrollTop = scrollers[el.dataset.keep]; });
     if (soft) body.scrollTop = st;
     if (panel === 'settings') fillHist('#save-hist');
