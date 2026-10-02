@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 22
       - name: JavaScript syntax check
-        run: node --check js/rateearth-systems.js && node --check js/weather-visuals.js && node --check js/core.js && node --check js/ui.js
+        run: node --check js/rateearth-systems.js && node --check js/weather-visuals.js && node --check js/core.js && node --check js/ai.js && node --check js/chat.js && node --check js/ui.js
       - name: Smoke test
         run: node tests/smoke.js
       - name: AI behavior test
