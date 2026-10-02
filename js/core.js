@@ -1606,8 +1606,10 @@ var Game = (function () {
     recomputeAll();
     return G;
   }
-  function save() {
-    try { localStorage.setItem('stzb_save', serialize()); return true; } catch (e) { console.warn('save failed', e); return false; }
+  function save(serialized) {
+    // 允許呼叫端傳入已序列化的內容，避免「自動存檔＋每日備份」在同一時間
+    // 對大型後期存檔連續 JSON.stringify 兩次，造成主執行緒明顯卡頓。
+    try { localStorage.setItem('stzb_save', serialized || serialize()); return true; } catch (e) { console.warn('save failed', e); return false; }
   }
   function hasSave() { try { return !!localStorage.getItem('stzb_save'); } catch (e) { return false; } }
   function load() {
