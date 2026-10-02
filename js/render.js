@@ -12,7 +12,6 @@ var Render = (function () {
   let showAIMarch = true;
   let detailSprites = null;
   let terrainArt = null;
-  const resourceClusterCache = new Map();
   const cityArt = {};
   const fx = [];
   const TEX = 4; // 地形貼圖每格像素
@@ -178,51 +177,23 @@ var Render = (function () {
     }
   }
 
-  // 資源地視覺：1級保持乾淨；2~9級逐級增加物件數。
-  // 每種資源/等級只合成一次，之後每格只需一次 drawImage，避免高等地拖慢手機。
-  function resourceCluster(res, lv) {
-    if (lv <= 1 || !terrainArt || !terrainArt.complete || !terrainArt.naturalWidth) return null;
+  // 效能優先：每塊資源地最多只畫 1 個圖案。
+  // 1級保持乾淨；2~9級只用圖案大小區分，不再重複繪製多顆石頭/樹木。
+  function drawSimpleResourceLand(res, lv, sx, sy, tw, variant) {
+    if (lv <= 1) return;
     const level = Math.max(2, Math.min(9, lv | 0));
-    const key = res + ':' + level;
-    if (resourceClusterCache.has(key)) return resourceClusterCache.get(key);
+    const size = 0.46 + (level - 2) * 0.045;
+    const kind = res === 0 ? 'forest' : res === 3 ? 'field' : 'rock';
+    const family = res === 3 ? 1.05 : res === 2 ? 0.98 : res === 1 ? 0.90 : 1;
 
-    const cv = document.createElement('canvas');
-    cv.width = 180; cv.height = 112;
-    const c = cv.getContext('2d');
-    const half = terrainArt.naturalWidth / 2;
-    const src = res === 0 ? [0, 0] : res === 3 ? [0, 1] : [1, 0];
-    const spots = [
-      [0.50,0.72,1.00],[0.34,0.73,0.76],[0.66,0.72,0.72],[0.43,0.57,0.64],
-      [0.58,0.56,0.60],[0.50,0.84,0.54],[0.27,0.60,0.48],[0.73,0.59,0.46]
-    ];
-    const count = Math.min(spots.length, level - 1);
-    c.imageSmoothingEnabled = true;
-    if (res === 1) c.filter = 'brightness(.64) saturate(.55) contrast(1.25)';
-    else if (res === 2) c.filter = 'brightness(1.12) saturate(.45) contrast(.96)';
+    ctx.save();
+    if (res === 1) ctx.filter = 'brightness(.66) saturate(.55) contrast(1.22)';
+    else if (res === 2) ctx.filter = 'brightness(1.10) saturate(.46) contrast(.96)';
 
-    for (let k = 0; k < count; k++) {
-      const [px, py, local] = spots[k];
-      const family = res === 0 ? 1.02 : res === 3 ? 1.08 : res === 2 ? 1.04 : .90;
-      const size = (0.32 + level * 0.018) * local * family;
-      const w = cv.width * size;
-      const h = cv.height * size * (res === 3 ? .78 : .92);
-      c.drawImage(
-        terrainArt,
-        src[0] * half, src[1] * half, half, half,
-        px * cv.width - w / 2, py * cv.height - h * .82, w, h
-      );
-    }
-    c.filter = 'none';
-    resourceClusterCache.set(key, cv);
-    return cv;
-  }
-
-  function drawResourceLand(res, lv, sx, sy, tw) {
-    const cluster = resourceCluster(res, lv);
-    if (!cluster) return;
-    const width = tw * 1.12;
-    const height = tw * 0.70;
-    ctx.drawImage(cluster, sx - width / 2, sy - height * .80, width, height);
+    const w = tw * size * family;
+    const h = tw * size * (kind === 'field' ? .62 : .70);
+    drawTerrainSprite(kind, sx, sy, w, h, variant);
+    ctx.restore();
   }
 
   // ============ 勢力覆蓋 ============
@@ -331,7 +302,8 @@ var Render = (function () {
 
   // 只畫螢幕可見土地的細邊界；比全地圖格線省很多，也不會蓋過資源/城池。
   function drawVisibleTileGrid(x0, x1, y0, y1, hw, hh, tw) {
-    if (tw < 26) return;
+    const touchDevice = (navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window);
+    if (tw < 26 || (touchDevice && tw < 55)) return;
     ctx.save();
     ctx.strokeStyle = tw >= 55 ? 'rgba(54,45,29,.28)' : 'rgba(54,45,29,.20)';
     ctx.lineWidth = tw >= 70 ? 1.15 : 0.8;
@@ -434,8 +406,8 @@ var Render = (function () {
         } else if (tr === TERRAIN.PLAIN && fine) {
           const r = T.res[i];
           const lv = T.lvl[i];
-          // 1級資源地不放任何資源物件；之後每升一級多一組。
-          drawResourceLand(r, lv, sx, sy, tw);
+          // 1級不畫；2~9級只畫單一簡圖，大小隨等級增加。
+          drawSimpleResourceLand(r, lv, sx, sy, tw, Math.floor(h * 10));
           if (showLv && lv >= 5) {
             ctx.fillStyle = 'rgba(27,35,21,0.68)';
             ctx.beginPath(); ctx.arc(sx + hw * 0.38, sy + hh * 0.5, 8, 0, 6.283); ctx.fill();
