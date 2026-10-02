@@ -42,3 +42,5 @@ jobs:
         run: node tests/economy.js
       - name: Save/load test
         run: node tests/saveload.js
+      - name: 500 AI performance stress test
+        run: node tests/performance-stress.js
