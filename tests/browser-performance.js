@@ -32,10 +32,9 @@ async function run() {
       page.on('pageerror', e => errors.push(e.message));
       // External fonts/card art are optional; test the complete local renderer.
       await page.route('**/*', route => route.request().url().startsWith(base) ? route.continue() : route.abort());
-      let releaseArt;
-      const artGate = new Promise(resolve => { releaseArt = resolve; });
-      if (mobile) await page.route('**/assets/terrain-details.png', async route => {
-        await artGate; await route.continue();
+      const mapAssetRequests = [];
+      page.on('request', request => {
+        if (/\/assets\/(terrain-details|city-capital|city-town)\.png/.test(request.url())) mapAssetRequests.push(request.url());
       });
       await page.addInitScript(() => {
         window.renderProbe = { mapFilters: 0, tintFilters: 0, canvases: 0 };
@@ -64,17 +63,9 @@ async function run() {
       });
       await page.click('[data-act="newgame"]');
       await page.waitForFunction(() => main.started);
-      await page.waitForFunction(() => renderCanvases.some(c => c.width === 1024 && c.height === 2048));
+      assert.equal(await page.evaluate(() => Render.cam.tw), 56, 'Use the source map default zoom');
       assert.equal(await page.evaluate(() => renderProbe.mapFilters), 0,
         'Never apply per-tile filters on the live map');
-      if (mobile) {
-        // Resource geometry must not be rebuilt when mountain artwork arrives.
-        const beforeArt = await page.evaluate(() => renderProbe.canvases);
-        const response = page.waitForResponse('**/assets/terrain-details.png');
-        releaseArt(); await (await response).finished();
-        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-        assert.equal(await page.evaluate(() => renderProbe.canvases), beforeArt, 'Art loading must not rebuild resource geometry');
-      }
       const baseline = await page.evaluate(() => ({ ...renderProbe }));
       assert.equal(baseline.mapFilters, 0, 'Never apply per-tile filters on the live map');
       assert.equal(baseline.tintFilters, 0, 'Geometry needs no image filters');
@@ -90,7 +81,7 @@ async function run() {
       const metrics = await page.evaluate(() => {
         const times = drawTimes.slice().sort((a, b) => a - b);
         const oldZoom = Render.cam.tw;
-        // Changing zoom must reuse the same geometry atlas, not grow a zoom/tile cache.
+        // Changing zoom must not allocate new canvases.
         for (const zoom of [24, 48, 80, 150, 48]) { Render.cam.tw = zoom; Render.draw(performance.now()); }
         Render.cam.tw = oldZoom;
         return { ...renderProbe, count: times.length,
@@ -108,8 +99,24 @@ async function run() {
       await page.click('#modal .close'); // Dismiss the new-season help dialog.
       await page.click('#speed button[data-v="0"]');
       assert.equal(await page.evaluate(() => Game.G.paused), true, 'Pause input must remain usable');
+      const interaction = await page.evaluate(() => {
+        const tile = Game.P[Game.G.userId].cityTile;
+        const pos = Render.toScreen(World.X(tile) + .5, World.Y(tile) + .5);
+        const hit = Render.tileAt(...pos);
+        Render.setMode('alliance'); Render.draw(performance.now());
+        Render.setSelected(tile); Render.setHover(tile); Render.draw(performance.now());
+        const selected = Render.selected;
+        Render.setMode('relation'); Render.setSelected(-1); Render.setHover(-1);
+        const overview = document.createElement('canvas'); overview.width=640; overview.height=360;
+        Render.drawWorldMap(overview);
+        return { tile, hit, selected, overviewReady: !!overview._map };
+      });
+      assert.equal(interaction.hit, interaction.tile);
+      assert.equal(interaction.selected, interaction.tile);
+      assert.equal(interaction.overviewReady, true);
       assert.deepEqual(errors, []);
-      console.log(mobile ? 'mobile/play (delayed art)' : 'desktop/index', JSON.stringify(metrics));
+      assert.deepEqual(mapAssetRequests, [], 'Copied renderer must not load the previous map artwork');
+      console.log(mobile ? 'mobile/play' : 'desktop/index', JSON.stringify(metrics));
       await context.close();
     }
   } finally {

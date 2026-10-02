@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/Lucypigr/claude-for-100",
+  "branch": "gh-pages",
+  "commit": "632b867d8521a766e143a8d6b48d6e53d961db51",
+  "path": "js/render.js",
+  "sha256": "254439abe5e953ef0b7ab158f25f671905345253d62d4b0f3bd9c4e2f37a2af4",
+  "destination": "js/render.js",
+  "modifications": "none; copied byte for byte"
+}
