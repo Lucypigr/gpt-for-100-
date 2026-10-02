@@ -3,10 +3,10 @@ const assert = require('node:assert/strict');
 const { load } = require('./load');
 const { Game, AI, World, TERRAIN, CFG } = load();
 
+assert.equal(AI.raiderQuota(500), 30, '500 AI 局應約有 30 名劫掠者');
 const G = Game.newGame({ seed: 771234, userName: '劫掠測試', aiCount: 80 });
 const raiders = Game.P.filter(p => p.ai && AI.raiderSelf(p));
-assert.ok(raiders.length >= 1, '80 AI 局至少應有一名劫掠客');
-assert.ok(raiders.length <= 3, '劫掠客必須是少數樣態');
+assert.ok(raiders.length >= 4 && raiders.length <= 6, '80 AI 局應約有 5 名劫掠者');
 const raider = raiders[0];
 assert.equal(AI.isRaider(raider), true, '劫掠客本人應被識別');
 assert.match(AI.styleSummary(raider), /劫掠客/, '作風摘要應顯示劫掠客');
@@ -25,7 +25,7 @@ assert.equal(AI.isRaider(helper), true, '劫掠盟成員也應採用劫掠行為
 // 讓保護期結束，只留下附近一名明顯弱者，其他人設成強勢以避免誤選。
 G.time = 20 * 1440;
 for (const p of Game.P) { p.protectEnd = 0; if (p !== raider && p !== helper) p.power = 400000; }
-const victim = Game.P.filter(p => p.ai && p !== raider && p !== helper && p.prof.persona !== 'raider')
+const victim = Game.P.filter(p => p.ai && p !== raider && p !== helper && !AI.raiderSelf(p))
   .sort((x,y) => World.dist(x.cityTile,raider.cityTile) - World.dist(y.cityTile,raider.cityTile))
   .find(p => World.dist(p.cityTile,raider.cityTile) <= 62 * Math.max(1,World.N/300));
 assert.ok(victim, '劫掠客附近應有可測試的弱者');
@@ -46,6 +46,12 @@ assert.ok((a.raiderInfamy || 0) >= 6, '劫掠同盟應累積劫掠惡名');
 assert.ok((raider.prof.raiderInfamy || 0) >= 6, '劫掠玩家應累積個人惡名');
 assert.ok(AI._pending.some(m => /劫掠客/.test(m.text) && /〔劫掠測試盟〕/.test(m.text)), '受害者應在世界頻道揭露劫掠同盟');
 assert.equal(AI.reputationSummary(raider), '劫掠惡名', '劫掠客聲譽應顯示劫掠惡名');
+
+// 惡名跨過門檻後，整個同盟會被列為「全服公敵」，並在世界頻道公告。
+AI.recordRaiderIncident(victim, raider, 27);
+assert.equal(AI.publicEnemyActive(a), true, '高惡名劫掠盟應成為全服公敵');
+assert.equal(AI.reputationSummary(raider), '全服公敵', '全服公敵狀態應覆蓋一般劫掠惡名顯示');
+assert.ok(Game.G.chat.world.some(m => /全服公敵/.test(m.text) && /劫掠測試盟/.test(m.text)), '世界頻道應公告全服公敵');
 
 // 非劫掠客不應因同一測試事件被錯誤標記。
 const clean = Game.P.find(p => p.ai && !AI.isRaider(p) && p !== victim && p.alliance < 0);
@@ -90,19 +96,28 @@ obsA.power = a.power = 100000;
 Object.assign(AI.traits(observer), { honorable:95, diplomatic:92, opportunistic:15, cautious:55, aggressive:40, warlike:35, courageous:45, ambitious:40 });
 const inf = a.raiderInfamy;
 const leaderInf = raider.prof.raiderInfamy || 0;
+const publicUntil = a.publicEnemyUntil;
 a.raiderInfamy = 0;
 raider.prof.raiderInfamy = 0;
+a.publicEnemyUntil = 0;
 const normalScore = AI.warIntentScore(obsA, a, observer);
 a.raiderInfamy = inf;
 raider.prof.raiderInfamy = leaderInf;
+a.publicEnemyUntil = publicUntil;
 const raiderScore = AI.warIntentScore(obsA, a, observer);
-assert.ok(raiderScore > normalScore, '重信用外交 AI 應因劫掠惡名提高警戒/敵意');
+assert.ok(raiderScore > normalScore, '重信用外交 AI 應因劫掠惡名與全服公敵提高警戒/敵意');
+
+// 高信用／好戰 AI 同盟會暫停 AI 內鬥並加入討伐，不會替真人盟主自動作決定。
+obsA.nextPublicEnemyThink = 0;
+assert.equal(AI.publicEnemyThink(obsA, observer), true, 'AI 同盟應能響應全服公敵討伐');
+assert.equal(obsA.enemy, a.id, '響應後應把全服公敵設為敵對同盟');
 
 // 存讀檔後，劫掠身份、目標、惡名與受害紀錄都必須保留。
 const snap = {
   archetype: raider.prof.archetype,
   victim: a.raiderVictim,
   infamy: a.raiderInfamy,
+  publicEnemyUntil: a.publicEnemyUntil,
   abuse: JSON.stringify(victim.raiderAbuse),
 };
 const save = Game.serialize();
@@ -113,6 +128,7 @@ const victim2 = Game.P[victim.id];
 assert.equal(raider2.prof.archetype, snap.archetype, '存檔後劫掠身份改變');
 assert.equal(a2.raiderVictim, snap.victim, '存檔後劫掠目標遺失');
 assert.equal(a2.raiderInfamy, snap.infamy, '存檔後劫掠惡名遺失');
+assert.equal(a2.publicEnemyUntil, snap.publicEnemyUntil, '存檔後全服公敵狀態遺失');
 assert.equal(JSON.stringify(victim2.raiderAbuse), snap.abuse, '存檔後受害紀錄遺失');
 
-console.log('Raider AI OK: rare archetype, weak-target gang harassment, pass blocking, public exposure, infamy and persistence');
+console.log('Raider AI OK: ~6% raiders, weak-target gangs, pass blocking, public exposure, public-enemy coalition and persistence');
