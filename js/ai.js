@@ -1464,6 +1464,7 @@ var AI = (function () {
     rr.hate=Math.min(100,rr.hate+28); rr.grudge=Math.min(100,rr.grudge+18); rr.trust=Math.max(-100,rr.trust-35);
     a.publicEnemyTarget=target.id;
     a.publicEnemyMobilizedUntil=g.time+720;
+    if (a.enemy===target.id) return false; // 已參戰，不要每輪重複宣戰刷頻
     const ok=declareWar(a,target,leader,'響應全服公敵討伐');
     if (ok && CHAT.publicEnemyJoin) Game.say(leader,'world',U.pick(CHAT.publicEnemyJoin).replace('{a}',target.name).replace('{b}',a.name));
     return ok;
