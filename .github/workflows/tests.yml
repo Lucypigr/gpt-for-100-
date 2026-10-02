@@ -34,6 +34,8 @@ jobs:
         run: node tests/warfare.js
       - name: Resource density performance test
         run: node tests/resource-density.js
+      - name: Land distribution test
+        run: node tests/land-distribution.js
       - name: Rate-earth systems regression test
         run: node tests/rateearth-systems.js
       - name: Alliance systems regression test
