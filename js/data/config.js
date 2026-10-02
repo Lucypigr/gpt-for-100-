@@ -142,7 +142,7 @@ var CFG = {
   FORT_BUILD_MIN: 60,
   FORT_DUR: 3000,
   ALLIANCE_MAX: 30,
-  ALLIANCE_CREATE_COST: { copper: 10000 },
+  ALLIANCE_CREATE_COST: { copper: 5000 },
   CAPTURE_HOURS: 12,        // 淪陷持續
   TRIBUTE_PCT: 0.2,
 };
