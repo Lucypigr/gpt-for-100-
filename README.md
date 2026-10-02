@@ -149,6 +149,9 @@ node tests/sim.js 10         # 無頭模擬 10 個遊戲日（含存讀檔），
 node tests/calibrate.js      # 隊伍戰力對守軍勝率校準
 ```
 
+瀏覽器效能測試與曾發生的卡頓原因、修正及防退化規則，見
+[效能問題紀錄](docs/performance.md)。修改地圖或主循環時，請一併執行該文件的瀏覽器測試。
+
 ## 參考資料
 
 規則參考下列網路資料整理；武將與戰法數值取自台服武將／戰法圖鑑（`wjzl.js`、`jzzl.js`），台服沒有的再用網易官網武將庫（`hero_extra.json`、`skill_extra.json`）：

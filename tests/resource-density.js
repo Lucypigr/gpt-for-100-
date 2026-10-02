@@ -33,7 +33,7 @@ assert.ok(render.includes('touchDevice && tw < 55'),
   '手機縮小地圖時應停止畫細格線');
 
 for (const html of [index, play]) {
-  assert.match(html, /js\/render\.js\?v=20261002-mapfix3/,
+  assert.match(html, /js\/render\.js\?v=20261002-tintcache1/,
     '頁面應載入效能優先 render.js，避免手機使用舊快取');
 }
 
