@@ -39,10 +39,12 @@ async function run() {
       });
       await page.addInitScript(() => {
         window.renderProbe = { mapFilters: 0, tintFilters: 0, canvases: 0 };
+        window.renderCanvases = [];
         const create = document.createElement.bind(document);
         document.createElement = function (name, ...args) {
-          if (name === 'canvas') renderProbe.canvases++;
-          return create(name, ...args);
+          const el = create(name, ...args);
+          if (name === 'canvas') { renderProbe.canvases++; renderCanvases.push(el); }
+          return el;
         };
         const desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'filter');
         Object.defineProperty(CanvasRenderingContext2D.prototype, 'filter', {
@@ -62,18 +64,20 @@ async function run() {
       });
       await page.click('[data-act="newgame"]');
       await page.waitForFunction(() => main.started);
-      await page.waitForFunction(() => renderProbe.tintFilters >= 2 || renderProbe.mapFilters > 0);
+      await page.waitForFunction(() => renderCanvases.some(c => c.width === 1024 && c.height === 2048));
       assert.equal(await page.evaluate(() => renderProbe.mapFilters), 0,
         'Never apply per-tile filters on the live map');
       if (mobile) {
-        // The fallback must be replaced once art arrives, not cached forever.
+        // Resource geometry must not be rebuilt when mountain artwork arrives.
+        const beforeArt = await page.evaluate(() => renderProbe.canvases);
         const response = page.waitForResponse('**/assets/terrain-details.png');
-        releaseArt(); await response;
-        await page.waitForFunction(() => renderProbe.tintFilters === 4);
+        releaseArt(); await (await response).finished();
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.evaluate(() => renderProbe.canvases), beforeArt, 'Art loading must not rebuild resource geometry');
       }
       const baseline = await page.evaluate(() => ({ ...renderProbe }));
       assert.equal(baseline.mapFilters, 0, 'Never apply per-tile filters on the live map');
-      assert.equal(baseline.tintFilters, mobile ? 4 : 2, 'Only two tint sprites per source image');
+      assert.equal(baseline.tintFilters, 0, 'Geometry needs no image filters');
       await page.evaluate(() => {
         window.drawTimes = [];
         const draw = Render.draw;
@@ -86,7 +90,7 @@ async function run() {
       const metrics = await page.evaluate(() => {
         const times = drawTimes.slice().sort((a, b) => a - b);
         const oldZoom = Render.cam.tw;
-        // Changing zoom must reuse the same two sprites, not grow a zoom/tile cache.
+        // Changing zoom must reuse the same geometry atlas, not grow a zoom/tile cache.
         for (const zoom of [24, 48, 80, 150, 48]) { Render.cam.tw = zoom; Render.draw(performance.now()); }
         Render.cam.tw = oldZoom;
         return { ...renderProbe, count: times.length,
