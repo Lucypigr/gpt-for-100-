@@ -74,7 +74,7 @@ for (const pass of passes) {
     Game.setOwner(land, raider.id);
     a.raiderVictim = victim.id;
     a.raiderVictimUntil = G.time + 1000;
-    if (AI.chooseRaiderPassTarget(a, raider)) { chosenPass = pass; break; }
+    if (AI.chooseRaiderPassTarget(a, raider)) { chosenPass = World.cities[a.target]; break; }
   }
   if (chosenPass) break;
 }
