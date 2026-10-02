@@ -145,13 +145,20 @@ var AI = (function () {
     t.ambitious=clampTrait(t.ambitious+20);
     return pr;
   }
+  function raiderQuota(n) {
+    // 約 6% 的 AI 屬於劫掠者：500 AI 局約 30 名。
+    return n<40?0:Math.max(1,Math.round(n*0.06));
+  }
   function assignRaiderArchetypes(profiles,n) {
-    const quota=n<40?0:Math.max(1,Math.round(n/80));
+    const quota=raiderQuota(n);
     if (!quota) return profiles;
+    const current=profiles.filter(pr=>pr&&pr.archetype==='raider').length;
+    const need=Math.max(0,quota-current);
+    if (!need) return profiles;
     const eligible=profiles.map((pr,i)=>({pr,i,h:stableHash([pr.type,pr.skill,pr.act,pr.aggr,pr.daily,pr.gold,pr.loyalty,pr.persona].join('|'))}))
-      .filter(x=>['regular','veteran','whale'].includes(x.pr.type)&&x.pr.persona!=='overlord'&&x.pr.persona!=='turtle')
+      .filter(x=>x.pr.archetype!=='raider'&&['regular','veteran','whale'].includes(x.pr.type)&&x.pr.persona!=='overlord'&&x.pr.persona!=='turtle')
       .sort((a,b)=>a.h-b.h||a.i-b.i);
-    for (const x of eligible.slice(0,quota)) applyRaiderArchetype(x.pr);
+    for (const x of eligible.slice(0,need)) applyRaiderArchetype(x.pr);
     return profiles;
   }
   function traits(p) { return finalizeTraits(p.prof).traits; }
@@ -174,10 +181,34 @@ var AI = (function () {
     }
     return false;
   }
+  const PUBLIC_ENEMY_INFAMY = 60;
+  const PUBLIC_ENEMY_WINDOW = 2880; // 兩個遊戲日；若繼續劫掠會不斷延長
   function raiderInfamyOfAlliance(a) {
     if (!a || a.dead) return 0;
     const L = Game.P[a.leader];
     return Math.max(a.raiderInfamy || 0, L && L.prof ? (L.prof.raiderInfamy || 0) : 0);
+  }
+  function publicEnemyActive(a) {
+    return !!(a && !a.dead && (a.publicEnemyUntil || 0) > G().time);
+  }
+  function markPublicEnemy(a, culprit) {
+    if (!a || a.dead || raiderInfamyOfAlliance(a) < PUBLIC_ENEMY_INFAMY) return false;
+    const g=G(), was=publicEnemyActive(a);
+    a.publicEnemySince = a.publicEnemySince || g.time;
+    a.publicEnemyUntil = Math.max(a.publicEnemyUntil || 0, g.time + PUBLIC_ENEMY_WINDOW);
+    a.publicEnemyLevel = raiderInfamyOfAlliance(a);
+    if (!was && g.time-(a.publicEnemyAnnouncedAt||-99999)>720) {
+      a.publicEnemyAnnouncedAt=g.time;
+      a.publicEnemyCount=(a.publicEnemyCount||0)+1;
+      Game.sys('world','【全服公敵】〔'+a.name+'〕因長期劫掠弱小、封路與騷擾，已被列為全服公敵！各同盟可暫停內鬥共同討伐。');
+      const u=Game.P[g.userId];
+      if (u && u.alliance!==a.id) Game.notify(u.id,'〔'+a.name+'〕已成為全服公敵。你可自行決定是否參與討伐。','bad');
+      if (culprit && culprit.ai && CHAT.publicEnemyCall) later(culprit,'world',U.pick(CHAT.publicEnemyCall).replace('{a}',a.name),U.rint(1,8));
+    }
+    return true;
+  }
+  function activePublicEnemies() {
+    return G().alliances.filter(a=>publicEnemyActive(a)).sort((x,y)=>raiderInfamyOfAlliance(y)-raiderInfamyOfAlliance(x));
   }
   // 同一陣營：同盟相同，或有從屬（附庸）關係
   function sameBloc(a1, a2) {
@@ -288,12 +319,13 @@ var AI = (function () {
   }
   function migrateRaiderArchetypes() {
     const g=G();
-    if (!g || g.raiderArchetypesReady) return;
+    if (!g || (g.raiderArchetypesVersion||0)>=2) return;
     const ais=Game.P.filter(q=>q&&q.ai&&q.prof);
-    // 新版存檔本來就有劫掠客；舊版存檔則在第一次讀取時以 deterministic 規則補上，
-    // 不消耗遊戲 RNG，也不改變既有地圖/武將/戰鬥隨機序列。
-    if (!ais.some(q=>q.prof.archetype==='raider')) assignRaiderArchetypes(ais.map(q=>q.prof),ais.length);
+    // v2 把比例提升到約 6%（500 AI 約 30 名）。舊存檔會 deterministic 補足數量，
+    // 不消耗遊戲 RNG，也不改變既有地圖、武將與戰鬥隨機序列。
+    assignRaiderArchetypes(ais.map(q=>q.prof),ais.length);
     g.raiderArchetypesReady=1;
+    g.raiderArchetypesVersion=2;
   }
   function restore(p) { calib(); mem(p); if (p.prof) finalizeTraits(p.prof); migrateRaiderArchetypes(); }
   function interval(p) {
@@ -311,9 +343,15 @@ var AI = (function () {
         .sort((a, b) => (b.prof.skill + (b.prof.type === 'whale' ? 0.3 : 0)) - (a.prof.skill + (a.prof.type === 'whale' ? 0.3 : 0)));
       if (arr.length) { arr[0].prof.leader = true; mem(arr[0]).createAt = U.rint(20, 240); }
     }
-    // 梟雄與劫掠客都傾向自立門戶；劫掠客會較早成盟，之後拉人一起騷擾弱者。
+    // 梟雄傾向自立門戶。劫掠者提高到約 30 名後，不再人人另開小盟：
+    // 約每 5 名選 1 名「劫掠頭目」早期建盟，其餘更容易聚到這些劫掠盟裡。
     for (const p of P) if (p.ai && persona(p) === 'overlord') { p.prof.leader = true; mem(p).createAt = U.rint(10, 90); }
-    for (const p of P) if (p.ai && raiderSelf(p)) { p.prof.leader = true; mem(p).createAt = U.rint(25, 140); }
+    const raiders=P.filter(p=>p.ai&&raiderSelf(p)).sort((x,y)=>stableHash(String(x.id)+'|'+x.name)-stableHash(String(y.id)+'|'+y.name));
+    const captainCount=raiders.length?Math.max(1,Math.round(raiders.length/5)):0;
+    for (const p of raiders.slice(0,captainCount)) {
+      p.prof.leader=true;
+      mem(p).createAt=25+(stableHash('raider-create|'+p.id)%116);
+    }
     // 額外幾位想自立門戶的玩家
     const extra = U.shuffle(P.filter(p => p.ai && !p.prof.leader && (p.prof.type === 'whale' || p.prof.type === 'veteran' || p.prof.type === 'regular'))).slice(0, 3);
     for (const p of extra) { p.prof.leader = true; mem(p).createAt = U.rint(200, 900); }
@@ -1297,8 +1335,9 @@ var AI = (function () {
     const t=traits(leader), r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power);
     const powerEdge=(ratio-1)*55, infamy=raiderInfamyOfAlliance(b);
     const antiRaider=infamy*Math.max(0,(t.honorable+t.diplomatic*0.7-t.opportunistic*0.45)/180);
+    const publicEnemyBonus=publicEnemyActive(b)?85+Math.min(80,infamy*0.5):0;
     return t.aggressive*0.28+t.warlike*0.34+t.opportunistic*0.16+t.ambitious*0.18+t.courageous*0.16+
-      r.hate*0.34+r.grudge*0.30+pressure*0.32+powerEdge+antiRaider-r.trust*0.32-r.cooperation*0.08-
+      r.hate*0.34+r.grudge*0.30+pressure*0.32+powerEdge+antiRaider+publicEnemyBonus-r.trust*0.32-r.cooperation*0.08-
       t.cautious*0.27-t.diplomatic*0.13;
   }
   function backstabIntentScore(a,b,leader) {
@@ -1320,6 +1359,8 @@ var AI = (function () {
   function reputationSummary(p) {
     const rep=(p&&p.prof&&p.prof.reputation===undefined)?50:((p&&p.prof&&p.prof.reputation)||50);
     const inf=(p&&p.prof&&p.prof.raiderInfamy)||0;
+    const a=p&&p.alliance>=0?G().alliances[p.alliance]:null;
+    if (publicEnemyActive(a)) return '全服公敵';
     if (raiderSelf(p) || inf>=24) return '劫掠惡名';
     if (rep>=72) return '守約';
     if (rep>=48) return '普通';
@@ -1362,7 +1403,7 @@ var AI = (function () {
     });
     if (!b) return;
     const r=rel(a,b.id), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power), infamy=raiderInfamyOfAlliance(b);
-    const willingToDeal = infamy < 18 || t.opportunistic + t.warlike > 145;
+    const willingToDeal = !publicEnemyActive(b) && (infamy < 18 || t.opportunistic + t.warlike > 145);
     if (t.diplomatic>=67 && r.hate<25 && willingToDeal && U.rnd()<(t.diplomatic-55)/120) { if (giftAlliance(a,b,leader)) return; }
     if (!treatyActive(a.id,b.id) && a.enemy!==b.id && b.enemy!==a.id && r.hate<20) {
       const distrustRaiders=infamy*Math.max(0,(t.honorable+t.diplomatic-t.opportunistic*0.5)/160);
@@ -1386,11 +1427,46 @@ var AI = (function () {
   function diplomacyTargetBias(a,bid,leader) {
     if (bid<0) return 0;
     const b=G().alliances[bid]; if(!b) return 0;
-    if (treatyActive(a.id,bid)) return -10000;
+    if (treatyActive(a.id,bid) && !publicEnemyActive(b)) return -10000;
     const t=traits(leader), r=rel(a,bid), pressure=targetPressure(b), ratio=a.power/Math.max(1,b.power), infamy=raiderInfamyOfAlliance(b);
     const antiRaider=infamy*Math.max(0,(t.honorable+t.diplomatic*0.6-t.opportunistic*0.5)/150);
-    return r.hate*1.6-r.trust*0.8+t.warlike*0.3+t.aggressive*0.2+t.opportunistic*(pressure/100)*0.8+antiRaider
+    const publicEnemyBonus=publicEnemyActive(b)?240:0;
+    return r.hate*1.6-r.trust*0.8+t.warlike*0.3+t.aggressive*0.2+t.opportunistic*(pressure/100)*0.8+antiRaider+publicEnemyBonus
       -t.cautious*Math.max(0,1.15-ratio)*1.2-t.diplomatic*0.12;
+  }
+
+  function endPactForPublicEnemy(a,b) {
+    const ra=rel(a,b.id), rb=rel(b,a.id);
+    ra.truceUntil=ra.napUntil=0; rb.truceUntil=rb.napUntil=0;
+    ra.lastInteraction=rb.lastInteraction=G().time;
+  }
+  function publicEnemyThink(a,leader) {
+    const g=G();
+    if (!a || a.dead || !leader || !leader.ai || publicEnemyActive(a) || isRaider(leader)) return false;
+    if (g.time < (a.nextPublicEnemyThink||0)) return false;
+    a.nextPublicEnemyThink=g.time+180;
+    const targets=activePublicEnemies().filter(b=>b.id!==a.id&&!sameBloc(a.id,b.id));
+    if (!targets.length) return false;
+    const target=targets[0], t=traits(leader);
+    const solidarity=t.honorable*0.36+t.diplomatic*0.22+t.warlike*0.24+t.courageous*0.18-t.opportunistic*0.12;
+    if (solidarity<43 && a.enemy!==target.id) return false;
+
+    // 若正在和另一個純 AI 同盟交戰，先短暫停戰，把兵力轉向全服公敵。
+    if (a.enemy>=0 && a.enemy!==target.id) {
+      const old=g.alliances[a.enemy];
+      if (old && !old.dead) {
+        if (userLed(old)) return false; // 不替真人玩家強制停戰
+        if (!publicEnemyActive(old)) makePact(a,old,'truce',360,leader);
+      }
+    }
+    if (treatyActive(a.id,target.id)) endPactForPublicEnemy(a,target);
+    const rr=rel(a,target.id);
+    rr.hate=Math.min(100,rr.hate+28); rr.grudge=Math.min(100,rr.grudge+18); rr.trust=Math.max(-100,rr.trust-35);
+    a.publicEnemyTarget=target.id;
+    a.publicEnemyMobilizedUntil=g.time+720;
+    const ok=declareWar(a,target,leader,'響應全服公敵討伐');
+    if (ok && CHAT.publicEnemyJoin) Game.say(leader,'world',U.pick(CHAT.publicEnemyJoin).replace('{a}',target.name).replace('{b}',a.name));
+    return ok;
   }
 
   // ================= 同盟 AI（盟主決策）=================
@@ -1415,6 +1491,7 @@ var AI = (function () {
       const leader = Game.P[a.leader];
       finalizeTraits(leader.prof);
       if (leader.ai && raiderSelf(leader)) chooseRaiderVictim(a,leader);
+      publicEnemyThink(a,leader);
       diplomacyThink(a, leader);
       inviteUser(a, leader);
       if (!leader.ai) recruitForUser(a);
@@ -1927,6 +2004,7 @@ var AI = (function () {
       a.raiderInfamy=(a.raiderInfamy||0)+amount*2;
       const L=Game.P[a.leader];
       if (L&&L.prof) L.prof.raiderInfamy=Math.max(L.prof.raiderInfamy||0,a.raiderInfamy);
+      markPublicEnemy(a,attacker);
     }
     if (r.score<3 || g.time-(r.lastReport||-99999)<240) return;
     r.lastReport=g.time; r.reports++;
@@ -2178,7 +2256,8 @@ var AI = (function () {
   }
 
   return {
-    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp, isRaider, raiderSelf, raiderInfamyOfAlliance,
+    makeProfiles, init, restore, PERSONA, TRAIT_KEYS, traits, personalityTags, styleSummary, reputationSummary, attitudeSummary, personMemory, rememberHarm, rememberHelp, isRaider, raiderSelf, raiderQuota, raiderInfamyOfAlliance,
+    publicEnemyActive, markPublicEnemy, activePublicEnemies, publicEnemyThink,
     allianceMemory, treatyActive, makePact, breakPact, declareWar, diplomacyThink, diplomacyTargetBias, warIntentScore, backstabIntentScore,
     diplomacyOffersFor, respondDiplomacyOffer,
     sameBloc, interval, think, setupLeaders, alliancesThink, chatTick, daily,
