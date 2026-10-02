@@ -772,6 +772,9 @@ var Render = (function () {
     const t = g.time + g.acc;
     const u = Game.P[g.userId];
     const T = Game.T;
+    const crowded = g.marches.length > 450 && cam.tw < 18;
+    const optionalStride = crowded ? Math.max(2, Math.ceil(g.marches.length / 280)) : 1;
+    let optionalIndex = 0;
     for (const m of g.marches) {
       const rel = relOfPid(m.pid);
       const mine = rel === 'self';
@@ -783,6 +786,9 @@ var Render = (function () {
         threat = o === u.id || (u.alliance >= 0 && al === u.alliance);
       }
       if (!showAIMarch && !mine && !threat && rel !== 'ally') continue;
+      // 大地圖縮遠且後期行軍數暴增時，完整繪出玩家/盟友/威脅，
+      // 其他 AI 行軍做抽樣顯示，避免數百上千條虛線每幀重畫造成卡頓。
+      if (crowded && !mine && !threat && rel !== 'ally' && (optionalIndex++ % optionalStride) !== 0) continue;
       const [gx, gy] = Game.marchPos(m, t);
       if (typeof RateEarthSystems !== 'undefined' && RateEarthSystems.hidesMarchInFog && RateEarthSystems.hidesMarchInFog(m, gx, gy, u)) continue;
       const [cx, cy] = toScreen(gx + 0.5, gy + 0.5);
