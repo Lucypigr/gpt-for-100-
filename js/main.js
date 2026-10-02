@@ -56,10 +56,13 @@ var main = { started: false };
       const G = Game.G;
       if (!G.paused && !G.over) Game.advance(dt * CFG.BASE_SPEED * G.speed);
 
-      // 後期部隊/戰線變多時將地圖自動降到約 30 FPS；遊戲模擬仍照原速度跑。
-      // 這能避免上千條行軍線＋天氣特效把主執行緒吃滿。
-      const busyMap = G.marches && G.marches.length > 350;
-      const renderGap = busyMap ? 33 : 16;
+      // 後期部隊/戰線變多時自動降低地圖更新頻率；遊戲模擬仍照原速度跑。
+      // 手機的 Canvas 預算較低，所以在大量行軍時更早啟動保護，避免越玩越卡。
+      const marchCount = G.marches ? G.marches.length : 0;
+      const touchDevice = (navigator.maxTouchPoints || 0) > 0 || ('ontouchstart' in window);
+      const busyMap = marchCount > (touchDevice ? 220 : 350);
+      const veryBusyMap = marchCount > (touchDevice ? 520 : 900);
+      const renderGap = veryBusyMap ? (touchDevice ? 50 : 40) : busyMap ? 33 : 16;
       if (now - lastRender >= renderGap) { lastRender = now; Render.draw(now); }
 
       UI.update(now);
