@@ -25,9 +25,11 @@ assert.ok(render.includes('drawResourceLand(r, lv, sx, sy, tw);'),
   '可見資源地應由原生 render.js 直接繪製');
 assert.ok(render.includes('ctx.drawImage(cluster, sx - width / 2'),
   '每塊資源地最終應以單次快取貼圖繪製');
+assert.ok(render.includes('function drawVisibleTileGrid('),
+  '地塊邊界應由可見範圍渲染，不可恢復全地圖格線 monkeypatch');
 
 for (const html of [index, play]) {
-  assert.match(html, /js\/render\.js\?v=20261002-mapfix1/,
+  assert.match(html, /js\/render\.js\?v=20261002-mapfix2/,
     '頁面應載入新版 render.js，避免手機使用舊快取');
 }
 
