@@ -180,23 +180,59 @@ var Render = (function () {
     }
   }
 
-  // 效能優先：每塊資源地最多只畫 1 個圖案。
-  // 1級保持乾淨；2~9級只用圖案大小區分，不再重複繪製多顆石頭/樹木。
+  // Bake all 4 resource types × 8 levels once. Each visible tile still costs
+  // one drawImage, regardless of how many objects its level contains.
+  let resourceAtlas = null, resourceAtlasSource = null;
+  const RESOURCE_CELL = 256;
+  function buildResourceAtlas() {
+    const artReady = terrainArt && terrainArt.complete && terrainArt.naturalWidth;
+    const source = artReady ? terrainArt : detailSprites;
+    if (resourceAtlas && resourceAtlasSource === source) return;
+    const atlas = document.createElement('canvas');
+    atlas.width = RESOURCE_CELL * 4; atlas.height = RESOURCE_CELL * 8;
+    const c = atlas.getContext('2d');
+    // Fixed footprints within the tile; increasing levels add objects rather
+    // than increasing per-frame work. Draw back-to-front for natural overlap.
+    const spots = [[128, 126], [82, 105], [174, 105], [128, 79],
+      [58, 129], [198, 129], [101, 153], [155, 153]];
+    for (let res = 0; res < 4; res++) {
+      for (let level = 2; level <= 9; level++) {
+        const count = level - 1;
+        const objects = spots.slice(0, count).sort((a, b) => a[1] - b[1]);
+        c.save();
+        c.translate(res * RESOURCE_CELL, (level - 2) * RESOURCE_CELL);
+        for (const [x, y] of objects) {
+          const size = res === 3 ? 86 : 92;
+          const dx = x - size / 2, dy = y - size * .78;
+          if (res === 1 || res === 2) c.drawImage(tintedRock(res), dx, dy, size, size);
+          else if (artReady) {
+            // The painted objects cross quadrant boundaries; crop their actual
+            // bounds so dense fields do not repeat stray tree fragments.
+            const box = res === 0 ? [0, 0, .56, .55] : [.025, .58, .54, .35];
+            const unit = terrainArt.naturalWidth;
+            const height = size * box[3] / box[2];
+            c.drawImage(terrainArt, box[0] * unit, box[1] * unit, box[2] * unit, box[3] * unit,
+              dx, y - height * .78, size, height);
+          } else {
+            const sprite = res === 0 ? detailSprites.forest[0] : detailSprites.field;
+            c.drawImage(sprite, dx, dy, size, size);
+          }
+        }
+        c.restore();
+      }
+    }
+    resourceAtlas = atlas; resourceAtlasSource = source;
+  }
+
   function drawSimpleResourceLand(res, lv, sx, sy, tw, variant) {
     if (lv <= 1) return;
     const level = Math.max(2, Math.min(9, lv | 0));
-    const size = 0.46 + (level - 2) * 0.045;
-    const kind = res === 0 ? 'forest' : res === 3 ? 'field' : 'rock';
-    const family = res === 3 ? 1.05 : res === 2 ? 0.98 : res === 1 ? 0.90 : 1;
-
+    buildResourceAtlas();
+    const w = tw * 1.04, h = tw * .78;
     ctx.save();
-    const w = tw * size * family;
-    const h = tw * size * (kind === 'field' ? .62 : .70);
-    if (res === 1 || res === 2) {
-      const sprite = tintedRock(res);
-      if (variant % 2) { ctx.translate(sx * 2, 0); ctx.scale(-1, 1); }
-      ctx.drawImage(sprite, sx - w / 2, sy - h * .82, w, h);
-    } else drawTerrainSprite(kind, sx, sy, w, h, variant);
+    if (variant % 2) { ctx.translate(sx * 2, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(resourceAtlas, res * RESOURCE_CELL, (level - 2) * RESOURCE_CELL,
+      RESOURCE_CELL, RESOURCE_CELL, sx - w / 2, sy - h * .57, w, h);
     ctx.restore();
   }
 
@@ -212,8 +248,8 @@ var Render = (function () {
     c.filter = res === 1 ? 'brightness(.66) saturate(.55) contrast(1.22)'
       : 'brightness(1.10) saturate(.46) contrast(.96)';
     if (artReady) {
-      const half = source.naturalWidth / 2;
-      c.drawImage(source, half, 0, half, half, 0, 0, 256, 256);
+      const unit = source.naturalWidth;
+      c.drawImage(source, unit * .56, unit * .12, unit * .42, unit * .42, 0, 0, 256, 256);
     } else c.drawImage(source, 0, 0, 256, 256);
     rockTints.set(res, { source, canvas });
     return canvas;
