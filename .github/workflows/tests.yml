@@ -44,3 +44,11 @@ jobs:
         run: node tests/economy.js
       - name: Save/load test
         run: node tests/saveload.js
+      - name: 500 AI performance stress test
+        run: node tests/performance-stress.js
+      - name: Install browser regression tools
+        run: |
+          npm install --no-save --package-lock=false playwright@1.62.1
+          npx playwright install --with-deps chromium
+      - name: Browser rendering regression (500 AI, desktop and mobile)
+        run: node tests/browser-performance.js

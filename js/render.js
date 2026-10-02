@@ -12,6 +12,9 @@ var Render = (function () {
   let showAIMarch = true;
   let detailSprites = null;
   let terrainArt = null;
+  // Only two bounded, pre-tinted rock sprites. Never filter the live map per tile:
+  // software Canvas can spend seconds flushing hundreds of filtered draws.
+  const rockTints = new Map();
   const cityArt = {};
   const fx = [];
   const TEX = 4; // 地形貼圖每格像素
@@ -187,13 +190,33 @@ var Render = (function () {
     const family = res === 3 ? 1.05 : res === 2 ? 0.98 : res === 1 ? 0.90 : 1;
 
     ctx.save();
-    if (res === 1) ctx.filter = 'brightness(.66) saturate(.55) contrast(1.22)';
-    else if (res === 2) ctx.filter = 'brightness(1.10) saturate(.46) contrast(.96)';
-
     const w = tw * size * family;
     const h = tw * size * (kind === 'field' ? .62 : .70);
-    drawTerrainSprite(kind, sx, sy, w, h, variant);
+    if (res === 1 || res === 2) {
+      const sprite = tintedRock(res);
+      if (variant % 2) { ctx.translate(sx * 2, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(sprite, sx - w / 2, sy - h * .82, w, h);
+    } else drawTerrainSprite(kind, sx, sy, w, h, variant);
     ctx.restore();
+  }
+
+  function tintedRock(res) {
+    const artReady = terrainArt && terrainArt.complete && terrainArt.naturalWidth;
+    const source = artReady ? terrainArt : detailSprites.rock;
+    const cached = rockTints.get(res);
+    if (cached && cached.source === source) return cached.canvas;
+    const canvas = document.createElement('canvas');
+    // Supports the maximum zoom at DPR 2; never cache by tile, frame or zoom.
+    canvas.width = canvas.height = 256;
+    const c = canvas.getContext('2d');
+    c.filter = res === 1 ? 'brightness(.66) saturate(.55) contrast(1.22)'
+      : 'brightness(1.10) saturate(.46) contrast(.96)';
+    if (artReady) {
+      const half = source.naturalWidth / 2;
+      c.drawImage(source, half, 0, half, half, 0, 0, 256, 256);
+    } else c.drawImage(source, 0, 0, 256, 256);
+    rockTints.set(res, { source, canvas });
+    return canvas;
   }
 
   // ============ 勢力覆蓋 ============
