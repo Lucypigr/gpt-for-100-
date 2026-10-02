@@ -76,10 +76,11 @@ var UI = (function () {
     main.started = true;
   }
   // ================= 存檔紀錄 =================
-  function snapshot(kind) {
+  function snapshot(kind, serialized) {
     if (!G || typeof SaveHist === 'undefined') return Promise.resolve(null);
     try {
-      return SaveHist.add({ name: user.name, clock: U.fmtClock(G.time), day: Game.day() + 1, kind }, Game.serialize()).catch(e => { console.warn('snapshot failed', e); return null; });
+      const body = serialized || Game.serialize();
+      return SaveHist.add({ name: user.name, clock: U.fmtClock(G.time), day: Game.day() + 1, kind }, body).catch(e => { console.warn('snapshot failed', e); return null; });
     } catch (e) { return Promise.resolve(null); }
   }
   function fillHist(sel) {
@@ -680,7 +681,14 @@ var UI = (function () {
       case 'olock': Mobile.lock(d.o).then(ok => { toast(ok ? '已鎖定' + (d.o === 'portrait' ? '直屏' : '橫屏') : '此瀏覽器不支援鎖定螢幕方向', ok ? 'good' : 'warn'); refreshPanel(true); }); break;
       case 'ounlock': Mobile.unlock(); toast('已解除方向鎖定', 'info'); refreshPanel(true); break;
       case 'cardart': CardArt.set(el.checked); refreshPanel(); hudTeams(); break;
-      case 'save': { const ok = Game.save(); saveMeta(); snapshot('manual').then(id => { toast(ok ? '已存檔' + (id ? '，並加入存檔紀錄' : '') : '存檔失敗（儲存空間不足）', ok ? 'good' : 'bad'); refreshPanel(true); }); break; }
+      case 'save': {
+        let body = null;
+        try { body = Game.serialize(); } catch (e) { /* 交由 save() 再處理 */ }
+        const ok = Game.save(body);
+        saveMeta();
+        snapshot('manual', body).then(id => { toast(ok ? '已存檔' + (id ? '，並加入存檔紀錄' : '') : '存檔失敗（儲存空間不足）', ok ? 'good' : 'bad'); refreshPanel(true); });
+        break;
+      }
       case 'histload': if (ask('讀取這份存檔紀錄？目前進度會先自動備份。')) { const id = +d.id; (main.started ? snapshot('backup') : Promise.resolve()).then(() => loadHist(id)); } break;
       case 'histdel': if (ask('刪除這份存檔紀錄？')) SaveHist.remove(+d.id).then(() => { fillHist('#save-hist'); fillHist('#start-hist-list'); }); break;
       case 'restart': if (ask('確定放棄目前進度，重新開始新賽季？（目前進度會保留在存檔紀錄）')) snapshot('backup').then(() => { main.started = false; Game.clearSave(); location.reload(); }); break;
