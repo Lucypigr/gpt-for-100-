@@ -4,8 +4,8 @@
   if(!proto||proto.__resourceDensityPatched)return;
   const nativeDrawImage=proto.drawImage;
   const terrainAtlas=/(?:^|\/)assets\/terrain-details\.png(?:[?#].*)?$/;
-  const spots=[[0,.02,1],[-.22,.10,.78],[.23,.08,.74],[-.10,-.12,.67],[.13,-.13,.62],[0,.18,.56]];
-  const countFor=l=>l<=1?0:l===2?1:l===3?2:l===4?2:l===5?3:l===6?4:l===7?5:6;
+  const spots=[[0,.02,1],[-.22,.10,.78],[.23,.08,.74],[-.10,-.12,.67],[.13,-.13,.62],[0,.18,.56],[-.28,-.06,.50],[.29,-.05,.48]];
+  const countFor=l=>Math.max(0,Math.min(spots.length,(l|0)-1));
   const scaleFor=l=>[0,0,.40,.47,.55,.61,.67,.72,.77,.82][Math.min(9,Math.max(0,l))];
 
   function drawTileGrid(ctx,image,args){
